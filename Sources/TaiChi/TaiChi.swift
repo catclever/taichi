@@ -14,6 +14,18 @@ struct TaiChiApp {
 }
 
 // 可配置参数模型 (供后续随时调整)
+// [Bug Fix Document]
+// 问题：太极窗口在无焦点（非活跃）状态下，第一下点击能量球或悬浮图标没有响应，必须点第二下才生效。
+// 原因：因为 TaiChiWindow 设置了非激活面板 (`nonactivatingPanel`)，macOS 默认行为是“吞噬”首次鼠标点击来赋予窗口焦点 (First-Mouse Problem)，导致 SwiftUI 手势无法接收到事件。
+// 修复逻辑：自定义 NSHostingView 并重写 `acceptsFirstMouse` 强制返回 true，让其在无焦点状态下依然直接接收首次点击。
+// 注意事项：不要擅自改回普通的 NSHostingView；同时需要配合 `canBecomeKey = false` 来确保点击穿透。
+class AcceptingFirstMouseHostingView<Content: SwiftUI.View>: NSHostingView<Content> {
+    override var acceptsFirstResponder: Bool { return true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        return true
+    }
+}
+
 struct TaiChiConfig {
     var triggerEdgeHeight: CGFloat = 10.0 // 屏幕底部多少像素内算作触发区
     var triggerCenterWidth: CGFloat = 500.0 // 触发区允许的左右宽度 (屏幕中心点向两侧延伸)
@@ -61,7 +73,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         customWindow.level = .floating
         customWindow.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         
-        let hostingView = NSHostingView(rootView: contentView)
+        let hostingView = AcceptingFirstMouseHostingView(rootView: contentView)
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         customWindow.contentView = hostingView
         
@@ -156,171 +168,153 @@ extension Notification.Name {
     static let hideTaiChi = Notification.Name("hideTaiChi")
 }
 
-// 自定义 Window，实现点击穿透
+// 自定义 Window，实现点击穿透和无焦点点击
 class TaiChiWindow: NSWindow {
-    override var canBecomeKey: Bool { return true }
+    override var canBecomeKey: Bool { return false }
 }
 
 // MARK: - Views
 
-// 一个单独的轨道图标项，自带 hover 缩放效果
-struct OrbitalAppIcon: View {
-    var app: NSRunningApplication
-    var index: Int
-    var total: Int
-    var orbRadius: CGFloat
-    var isRevealed: Bool
-    var onTap: () -> Void
-    
-    @State private var isHovered = false
-    
-    // 从左侧开始排列，固定间距，如果数量过多则压缩间距
-    var angleRadians: Double {
-        let startDeg = -160.0
-        let availableArc = 140.0 // 最多分布在 -160° 到 -20° 之间
-        let idealStep = 25.0
-        let step = total <= 1 ? 0.0 : min(idealStep, availableArc / Double(total - 1))
-        let deg = startDeg + step * Double(index)
-        return deg * .pi / 180.0
-    }
-    
-    var iconOffset: CGSize {
-        CGSize(
-            width:  cos(angleRadians) * orbRadius,
-            height: sin(angleRadians) * orbRadius
-        )
-    }
-    
-    var body: some View {
-        // 图标 + 毛玻璃底板
-        ZStack {
-            // 实心毛玻璃圆形底板，确保图标清晰可辨
-            Circle()
-                .fill(Material.ultraThinMaterial)
-                .frame(width: 50, height: 50)
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(isHovered ? 0.3 : 0.12), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
-            
-            if let icon = app.icon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 36, height: 36)
-            } else {
-                Image(systemName: "app.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(.white.opacity(0.5))
-            }
-        }
-        .opacity(isHovered ? 1.0 : 0.4)
-        .frame(width: 60)
-        .scaleEffect(isHovered ? 1.12 : 1.0)
-        .animation(.easeOut(duration: 0.15), value: isHovered)
-        .offset(iconOffset)
-        // 入场动画：从球心方向按顺序飞出
-        .scaleEffect(isRevealed ? 1.0 : 0.1)
-        .opacity(isRevealed ? 1.0 : 0.0)
-        .animation(
-            .spring(response: 0.4, dampingFraction: 0.7).delay(Double(index) * 0.06),
-            value: isRevealed
-        )
-        .onHover { isHovered = $0 }
-        .onTapGesture { onTap() }
-    }
-}
 
 struct TaiChiOverlayView: View {
     var config: TaiChiConfig
     @State private var isVisible: Bool = false
-    @State private var hiddenApps: [NSRunningApplication] = []
-    @State private var activeView: HubDimension = .hiddenWindows
+    @State private var activeView: HubDimension = .defaultApps
     
-    // 轨道半径 = 球的半径 + 紧凑距离（缩短到 +30，让图标紧贴球边缘）
+    @ObservedObject private var settings = TaiChiSettings.shared
+    @State private var combinedApps: [CombinedApp] = []
+    @State private var appScrollOffset: Int = 0
+    @State private var clickRotation: Double = 0
+    @State private var monitoredAppsMode: MonitoredAppsMode = .windows
+    let maxVisibleApps = 7
+    
     var orbitalRadius: CGFloat { config.hubSize / 2 + 35 }
-    // 显示时球沉入底边的偏移量
     var orbSinkOffset: CGFloat { config.hubSize * 0.25 }
+    
+    var visibleApps: [CombinedApp] {
+        if combinedApps.isEmpty { return [] }
+        let startIndex = min(appScrollOffset, max(0, combinedApps.count - maxVisibleApps))
+        let endIndex = min(startIndex + maxVisibleApps, combinedApps.count)
+        return Array(combinedApps[startIndex..<endIndex])
+    }
     
     var body: some View {
         VStack {
             Spacer()
             
-            // 能量球 + 轨道图标（图标作为球的 overlay，坐标原点自动是球心）
             ZStack {
+                // Background circle
                 Circle()
                     .fill(Material.ultraThin)
                     .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
-                
-                FluidCoreView()
-                
-                // 无隐藏窗口时的空状态提示
-                if isVisible && activeView == .hiddenWindows && hiddenApps.isEmpty {
-                    VStack(spacing: 4) {
-                        Image(systemName: "eye.slash")
-                            .font(.system(size: 16))
-                            .foregroundColor(.white.opacity(0.3))
-                        Text("无隐藏窗口")
-                            .font(.system(size: 9, weight: .medium, design: .rounded))
-                            .foregroundColor(.white.opacity(0.35))
-                    }
-                }
-            }
-            // 轨道卫星图标作为 overlay，坐标原点 = 球心
-            .overlay {
-                if isVisible && activeView == .hiddenWindows {
-                    ForEach(Array(hiddenApps.enumerated()), id: \.element.processIdentifier) { index, app in
-                        OrbitalAppIcon(
-                            app: app,
-                            index: index,
-                            total: max(hiddenApps.count, 1),
-                            orbRadius: orbitalRadius,
-                            isRevealed: isVisible,
-                            onTap: {
-                                app.unhide()
-                                app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+                    // ⚠️ 极其重要的防御性注释：
+                    // 绝不允许改回 `.onTapGesture`！
+                    // 因为太极是一个没有标题栏且不会抢夺系统焦点的悬浮面板 (`nonactivatingPanel`)。
+                    // 如果使用 `.onTapGesture`，由于 macOS 的 First-Mouse 吞噬机制，第一下点击会被操作系统拦截用于赋予窗口焦点，导致点击失效（必须点两下）。
+                    // 使用 `DragGesture(minimumDistance: 0)` 极具侵略性，它会无视窗口焦点状态，强行拦截第一下点击并瞬间触发交互。触之即发，第一下必中！
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onEnded { value in
+                                guard let dimension = resolveDimension(at: value.location, hubSize: config.hubSize) else {
+                                    print("Ignored background tap: clicking on an orbital icon")
+                                    return
+                                }
+                                print("Triggered: \(dimension.rawValue)")
                                 
-                                // 点击后立刻隐藏太极
-                                NotificationCenter.default.post(name: .hideTaiChi, object: nil)
+                                if dimension == .missionControl {
+                                    openMissionControl()
+                                    NotificationCenter.default.post(name: .hideTaiChi, object: nil)
+                                    return
+                                }
                                 
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                    refreshHiddenApps()
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                                    if dimension == .monitoredApps {
+                                        clickRotation += 180
+                                        if activeView == .monitoredApps {
+                                            if monitoredAppsMode == .windows {
+                                                monitoredAppsMode = .apps
+                                            } else {
+                                                monitoredAppsMode = .windows
+                                            }
+                                        } else {
+                                            activeView = .monitoredApps
+                                            monitoredAppsMode = .windows
+                                        }
+                                    } else if dimension == .presetPaths {
+                                        clickRotation -= 180
+                                        activeView = dimension
+                                    } else {
+                                        activeView = dimension
+                                        if dimension == .defaultApps {
+                                            refreshApps()
+                                        }
+                                    }
                                 }
                             }
-                        )
+                    )
+                
+                FluidCoreView()
+                    .rotationEffect(.degrees(clickRotation))
+                    .allowsHitTesting(false)
+                
+                if activeView == .defaultApps {
+                    if combinedApps.isEmpty && isVisible {
+                        VStack(spacing: 4) {
+                            Image(systemName: "eye.slash")
+                                .font(.system(size: 16))
+                                .foregroundColor(.white.opacity(0.3))
+                            Text("无应用")
+                                .font(.system(size: 9, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.35))
+                        }
+                    } else {
+                        // Hover scroll areas if needed
+                        if combinedApps.count > maxVisibleApps {
+                            HStack {
+                                ScrollTriggerArea(isLeft: true) { hovering in
+                                    if hovering && appScrollOffset > 0 {
+                                        withAnimation { appScrollOffset -= 1 }
+                                    }
+                                }
+                                Spacer()
+                                ScrollTriggerArea(isLeft: false) { hovering in
+                                    if hovering && appScrollOffset < combinedApps.count - maxVisibleApps {
+                                        withAnimation { appScrollOffset += 1 }
+                                    }
+                                }
+                            }
+                            .frame(width: orbitalRadius * 2 + 100, height: orbitalRadius * 2 + 100)
+                        }
+                        
+                        ForEach(Array(visibleApps.enumerated()), id: \.element.id) { index, app in
+                            OrbitalAppIcon(
+                                app: app,
+                                index: index,
+                                totalVisible: visibleApps.count,
+                                orbRadius: orbitalRadius,
+                                isRevealed: isVisible,
+                                onTap: {
+                                    handleAppTap(app)
+                                }
+                            )
+                        }
                     }
+                } else if activeView == .monitoredApps {
+                    MonitoredAppsOverlay(orbRadius: orbitalRadius, isRevealed: isVisible, mode: $monitoredAppsMode, activeView: $activeView)
+                } else if activeView == .presetPaths {
+                    PresetPathsOverlay(orbRadius: orbitalRadius, isRevealed: isVisible)
                 }
             }
             .frame(width: config.hubSize, height: config.hubSize)
             .offset(y: isVisible ? orbSinkOffset : config.hubSize + 50)
             .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: isVisible)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onEnded { value in
-                        let dimension = resolveDimension(at: value.location, hubSize: config.hubSize)
-                        print("Triggered: \(dimension.rawValue)")
-                        
-                        if dimension == .hiddenWindows {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                activeView = .hiddenWindows
-                                refreshHiddenApps()
-                            }
-                        } else {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                activeView = dimension
-                            }
-                        }
-                    }
-            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onReceive(NotificationCenter.default.publisher(for: .orbVisibilityChanged)) { notification in
             guard let visible = notification.object as? Bool else { return }
             if visible {
-                // 升起时默认扫描并展示隐藏窗口
-                activeView = .hiddenWindows
-                refreshHiddenApps()
+                activeView = .defaultApps
+                refreshApps()
             }
             withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                 isVisible = visible
@@ -328,39 +322,79 @@ struct TaiChiOverlayView: View {
         }
     }
     
-    private func refreshHiddenApps() {
-        hiddenApps = NSWorkspace.shared.runningApplications.filter {
-            $0.activationPolicy == .regular && $0.isHidden
+    private func refreshApps() {
+        let runningApps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
+        var result: [CombinedApp] = []
+        
+        for app in runningApps {
+            if app.isHidden {
+                result.append(CombinedApp(id: "run_\(app.processIdentifier)", runningApp: app, isHidden: true, isOpen: true))
+            }
+        }
+        
+        for resident in settings.residentApps {
+            let isRunning = runningApps.contains { $0.bundleIdentifier == resident.id }
+            if !isRunning {
+                result.append(CombinedApp(id: "res_\(resident.id)", residentApp: resident, isHidden: false, isOpen: false))
+            }
+        }
+        
+        combinedApps = result
+        appScrollOffset = 0
+    }
+    
+    private func handleAppTap(_ app: CombinedApp) {
+        if let runningApp = app.runningApp {
+            runningApp.unhide()
+            runningApp.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+        } else if let resident = app.residentApp {
+            NSWorkspace.shared.open(URL(fileURLWithPath: resident.path))
+        }
+        NotificationCenter.default.post(name: .hideTaiChi, object: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            refreshApps()
+        }
+    }
+    
+    private func openMissionControl() {
+        let url = URL(fileURLWithPath: "/System/Applications/Mission Control.app")
+        if FileManager.default.fileExists(atPath: url.path) {
+            NSWorkspace.shared.open(url)
+        } else {
+            NSWorkspace.shared.launchApplication("Mission Control")
         }
     }
 }
 
 enum HubDimension: String {
     case missionControl = "调度中心"
-    case hiddenWindows  = "隐藏窗口"
-    case finderWindows  = "访达窗口"
-    case presetPaths    = "预设路径"
+    case defaultApps = "常驻应用"
+    case monitoredApps = "监控应用"
+    case presetPaths = "预设路径"
 }
 
-func resolveDimension(at location: CGPoint, hubSize: CGFloat) -> HubDimension {
+func resolveDimension(at location: CGPoint, hubSize: CGFloat) -> HubDimension? {
     let center = CGPoint(x: hubSize / 2, y: hubSize / 2) 
     let dx = location.x - center.x
     let dy = center.y - location.y 
     
     let distance = sqrt(dx*dx + dy*dy)
-    if distance < 45 { return .hiddenWindows } 
     
-    let startAngle = -30.0 
-    let sectorSize = 240.0 / 3.0 
+    let orbitalRadius = hubSize / 2 + 35
+    if distance > orbitalRadius - 25 {
+        return nil
+    }
     
-    var angle = atan2(dy, dx) * 180 / .pi - startAngle
-    while angle < 0 { angle += 360 }
+    if distance < 45 { return .defaultApps } // About 1/3 of radius
     
-    if angle < sectorSize { return .presetPaths }
-    if angle < sectorSize * 2 { return .missionControl }
-    if angle < sectorSize * 3 { return .finderWindows }
+    var angle = atan2(dy, dx) * 180 / .pi
+    if angle < 0 { angle += 360 }
     
-    return .hiddenWindows 
+    if angle >= 51 && angle <= 129 { return .missionControl }
+    if angle > 129 && angle < 225 { return .monitoredApps }
+    if angle >= 315 || angle < 51 { return .presetPaths }
+    
+    return .defaultApps 
 }
 
 struct FluidCoreView: View {

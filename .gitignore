@@ -3,3 +3,5 @@
 .agent/
 .vscode/
 .build/
+TaiChi.app/
+dev_test/

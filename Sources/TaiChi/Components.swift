@@ -1,0 +1,193 @@
+import SwiftUI
+
+struct CombinedApp: Identifiable {
+    var id: String
+    var runningApp: NSRunningApplication?
+    var residentApp: ResidentApp?
+    var isHidden: Bool
+    var isOpen: Bool
+}
+
+struct OrbitalAppIcon: View {
+    var app: CombinedApp
+    var index: Int
+    var totalVisible: Int // max 7
+    var orbRadius: CGFloat
+    var isRevealed: Bool
+    var onTap: () -> Void
+    
+    @State private var isHovered = false
+    
+    var angleRadians: Double {
+        let startDeg = -160.0
+        let availableArc = 140.0 // -160 to -20
+        let idealStep = 25.0
+        let step = totalVisible <= 1 ? 0.0 : min(idealStep, availableArc / Double(totalVisible - 1))
+        let deg = startDeg + step * Double(index)
+        return deg * .pi / 180.0
+    }
+    
+    var iconOffset: CGSize {
+        CGSize(
+            width: cos(angleRadians) * orbRadius,
+            height: sin(angleRadians) * orbRadius
+        )
+    }
+    
+    var displayOpacity: Double {
+        if !app.isOpen { return 1.0 } // 后面统一置灰
+        if app.isHidden { return 0.4 } // 隐藏状态半透明
+        return 1.0 // 打开且非隐藏正常显示
+    }
+    
+    var isGrayscale: Bool {
+        return !app.isOpen
+    }
+    
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Material.ultraThinMaterial)
+                .frame(width: 42, height: 42)
+                .overlay(
+                    Circle()
+                        .stroke(Color.white.opacity(isHovered ? 0.3 : 0.12), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+            
+            if let icon = getIcon() {
+                Image(nsImage: icon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 36, height: 36)
+                    .grayscale(isGrayscale ? 0.99 : 0) // 置灰
+            } else {
+                Image(systemName: "app.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(.white.opacity(0.5))
+            }
+        }
+        .opacity(isHovered ? 1.0 : displayOpacity)
+        .frame(width: 50)
+        .scaleEffect(isHovered ? 1.12 : 1.0)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .offset(iconOffset)
+        .scaleEffect(isRevealed ? 1.0 : 0.1)
+        .opacity(isRevealed ? 1.0 : 0.0)
+        .animation(
+            .spring(response: 0.4, dampingFraction: 0.7).delay(Double(index) * 0.06),
+            value: isRevealed
+        )
+        .onHover { isHovered = $0 }
+        // ⚠️ 防御性注释：绝不允许使用 .onTapGesture，必须使用 DragGesture 绕过 macOS 焦点吞噬机制，实现无焦点第一下点击必中！
+        .gesture(DragGesture(minimumDistance: 0).onEnded { _ in onTap() })
+    }
+    
+    func getIcon() -> NSImage? {
+        if let app = app.runningApp {
+            return app.icon
+        }
+        if let path = app.residentApp?.path {
+            return NSWorkspace.shared.icon(forFile: path)
+        }
+        return nil
+    }
+}
+
+struct SettingsButton: View {
+    @State private var isHovered = false
+    
+    var body: some View {
+        Button(action: {
+            SettingsWindowManager.shared.show()
+            NotificationCenter.default.post(name: NSNotification.Name("hideTaiChi"), object: nil)
+        }) {
+            ZStack {
+                Circle()
+                    .fill(Material.ultraThinMaterial)
+                    .frame(width: 40, height: 40)
+                    .overlay(
+                        Circle().stroke(Color.white.opacity(isHovered ? 0.3 : 0.12), lineWidth: 1)
+                    )
+                
+                YinYangIcon()
+                    .frame(width: 20, height: 20)
+                    .rotationEffect(.degrees(isHovered ? 180 : 0))
+                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHovered)
+            }
+            .scaleEffect(isHovered ? 1.1 : 1.0)
+            .contentShape(Circle())
+            .onHover { isHovered = $0 }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct YinYangIcon: View {
+    var body: some View {
+        GeometryReader { geometry in
+            let size = min(geometry.size.width, geometry.size.height)
+            ZStack {
+                // Right half (light)
+                Path { path in
+                    path.addArc(center: CGPoint(x: size/2, y: size/2), radius: size/2, startAngle: .degrees(-90), endAngle: .degrees(90), clockwise: false)
+                }
+                .fill(Color.white.opacity(0.8))
+                
+                // Left half (dark)
+                Path { path in
+                    path.addArc(center: CGPoint(x: size/2, y: size/2), radius: size/2, startAngle: .degrees(90), endAngle: .degrees(270), clockwise: false)
+                }
+                .fill(Color.white.opacity(0.3))
+                
+                // Top inner circle (dark base)
+                Circle()
+                    .fill(Color.white.opacity(0.3))
+                    .frame(width: size/2, height: size/2)
+                    .offset(y: -size/4)
+                
+                // Bottom inner circle (light base)
+                Circle()
+                    .fill(Color.white.opacity(0.8))
+                    .frame(width: size/2, height: size/2)
+                    .offset(y: size/4)
+                
+                // Top dot (light)
+                Circle()
+                    .fill(Color.white.opacity(0.8))
+                    .frame(width: size/6, height: size/6)
+                    .offset(y: -size/4)
+                
+                // Bottom dot (dark)
+                Circle()
+                    .fill(Color.white.opacity(0.3))
+                    .frame(width: size/6, height: size/6)
+                    .offset(y: size/4)
+            }
+        }
+    }
+}
+
+struct ScrollTriggerArea: View {
+    var isLeft: Bool
+    var onHover: (Bool) -> Void
+    
+    @State private var isHovered = false
+    
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .contentShape(Rectangle())
+            .frame(width: 60, height: 100)
+            .overlay(
+                Image(systemName: isLeft ? "chevron.left" : "chevron.right")
+                    .font(.title)
+                    .foregroundColor(.white.opacity(isHovered ? 0.8 : 0.3))
+                    .shadow(color: .black.opacity(0.5), radius: 2)
+            )
+            .onHover { hovering in
+                isHovered = hovering
+                onHover(hovering)
+            }
+    }
+}

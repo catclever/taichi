@@ -206,13 +206,14 @@ struct TaiChiOverlayView: View {
                 // Background circle
                 Circle()
                     .fill(Material.ultraThin)
+                    .opacity(0.85)
                     .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
-                    // ⚠️ 极其重要的防御性注释：
-                    // 绝不允许改回 `.onTapGesture`！
-                    // 因为太极是一个没有标题栏且不会抢夺系统焦点的悬浮面板 (`nonactivatingPanel`)。
-                    // 如果使用 `.onTapGesture`，由于 macOS 的 First-Mouse 吞噬机制，第一下点击会被操作系统拦截用于赋予窗口焦点，导致点击失效（必须点两下）。
-                    // 使用 `DragGesture(minimumDistance: 0)` 极具侵略性，它会无视窗口焦点状态，强行拦截第一下点击并瞬间触发交互。触之即发，第一下必中！
-                    .gesture(
+                // ⚠️ 极其重要的防御性注释：
+                // 绝不允许改回 `.onTapGesture`！
+                // 因为太极是一个没有标题栏且不会抢夺系统焦点的悬浮面板 (`nonactivatingPanel`)。
+                // 如果使用 `.onTapGesture`，由于 macOS 的 First-Mouse 吞噬机制，第一下点击会被操作系统拦截用于赋予窗口焦点，导致点击失效（必须点两下）。
+                // 使用 `DragGesture(minimumDistance: 0)` 极具侵略性，它会无视窗口焦点状态，强行拦截第一下点击并瞬间触发交互。触之即发，第一下必中！
+                .gesture(
                         DragGesture(minimumDistance: 0)
                             .onEnded { value in
                                 guard let dimension = resolveDimension(at: value.location, hubSize: config.hubSize) else {
@@ -256,6 +257,13 @@ struct TaiChiOverlayView: View {
                 FluidCoreView()
                     .rotationEffect(.degrees(clickRotation))
                     .allowsHitTesting(false)
+                
+                // ⚠️ 位置记录注释：
+                // 将设置按钮刚好卡在屏幕物理底边（呈现被切掉一半的高级隐藏效果）。
+                // config.hubSize / 2 代表面板的最底边，而 orbSinkOffset 是面板下沉的距离。
+                // 两者相减即为刚好贴着屏幕下边缘的位置。
+                SettingsButton()
+                    .offset(y: config.hubSize / 2 - orbSinkOffset)
                 
                 if activeView == .defaultApps {
                     if combinedApps.isEmpty && isVisible {

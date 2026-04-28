@@ -104,11 +104,11 @@ struct SettingsButton: View {
         }) {
             ZStack {
                 Circle()
-                    .fill(Material.ultraThinMaterial)
+                    .fill(Material.thinMaterial) // 参考图中的浅色通透毛玻璃
                     .frame(width: 40, height: 40)
-                    .overlay(
-                        Circle().stroke(Color.white.opacity(isHovered ? 0.3 : 0.12), lineWidth: 1)
-                    )
+                .overlay(
+                    Circle().stroke(Color.white.opacity(isHovered ? 0.3 : 0.12), lineWidth: 1)
+                )
                 
                 YinYangIcon()
                     .frame(width: 20, height: 20)
@@ -123,44 +123,55 @@ struct SettingsButton: View {
     }
 }
 
+// 纯手绘的精美太极图标
 struct YinYangIcon: View {
     var body: some View {
         GeometryReader { geometry in
             let size = min(geometry.size.width, geometry.size.height)
+            let center = CGPoint(x: size/2, y: size/2)
+            
+            // 亮侧：更亮（纯白），更不透明
+            let lightColor = Color.white
+            let lightOpacity: Double = 0.98
+            let lightGray = lightColor.opacity(lightOpacity)
+            
+            // 暗侧：更偏灰（调高白度），更透明
+            let darkColor = Color(white: 0.55)
+            let darkOpacity: Double = 0.55
+            let darkGray = darkColor.opacity(darkOpacity)
+            
+            // 顶部圆点 (位于暗区)：对面的颜色(亮)，当前区域的透明度(暗)
+            let topDotColor = lightColor.opacity(darkOpacity)
+            
+            // 底部圆点 (位于亮区)：对面的颜色(暗)，当前区域的透明度(亮)
+            let bottomDotColor = darkColor.opacity(lightOpacity)
+            
             ZStack {
-                // Right half (light)
+                // 右半部分 (亮) - 包含底部突起和顶部内凹
                 Path { path in
-                    path.addArc(center: CGPoint(x: size/2, y: size/2), radius: size/2, startAngle: .degrees(-90), endAngle: .degrees(90), clockwise: false)
+                    path.addArc(center: center, radius: size/2, startAngle: .degrees(270), endAngle: .degrees(90), clockwise: false)
+                    path.addArc(center: CGPoint(x: size/2, y: size*3/4), radius: size/4, startAngle: .degrees(90), endAngle: .degrees(-90), clockwise: false)
+                    path.addArc(center: CGPoint(x: size/2, y: size/4), radius: size/4, startAngle: .degrees(90), endAngle: .degrees(-90), clockwise: true)
                 }
-                .fill(Color.white.opacity(0.8))
+                .fill(lightGray)
                 
-                // Left half (dark)
+                // 左半部分 (暗) - 包含顶部突起和底部内凹
                 Path { path in
-                    path.addArc(center: CGPoint(x: size/2, y: size/2), radius: size/2, startAngle: .degrees(90), endAngle: .degrees(270), clockwise: false)
+                    path.addArc(center: center, radius: size/2, startAngle: .degrees(90), endAngle: .degrees(270), clockwise: false)
+                    path.addArc(center: CGPoint(x: size/2, y: size/4), radius: size/4, startAngle: .degrees(-90), endAngle: .degrees(90), clockwise: false)
+                    path.addArc(center: CGPoint(x: size/2, y: size*3/4), radius: size/4, startAngle: .degrees(-90), endAngle: .degrees(90), clockwise: true)
                 }
-                .fill(Color.white.opacity(0.3))
+                .fill(darkGray)
                 
-                // Top inner circle (dark base)
+                // 顶部圆点 (位于暗区)
                 Circle()
-                    .fill(Color.white.opacity(0.3))
-                    .frame(width: size/2, height: size/2)
-                    .offset(y: -size/4)
-                
-                // Bottom inner circle (light base)
-                Circle()
-                    .fill(Color.white.opacity(0.8))
-                    .frame(width: size/2, height: size/2)
-                    .offset(y: size/4)
-                
-                // Top dot (light)
-                Circle()
-                    .fill(Color.white.opacity(0.8))
+                    .fill(topDotColor)
                     .frame(width: size/6, height: size/6)
                     .offset(y: -size/4)
                 
-                // Bottom dot (dark)
+                // 底部圆点 (位于亮区)
                 Circle()
-                    .fill(Color.white.opacity(0.3))
+                    .fill(bottomDotColor)
                     .frame(width: size/6, height: size/6)
                     .offset(y: size/4)
             }

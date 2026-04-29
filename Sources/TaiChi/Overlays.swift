@@ -322,16 +322,25 @@ struct OrbitalPathIcon: View {
     }
     
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(Material.ultraThinMaterial)
-                .frame(width: 42, height: 42)
-                .shadow(color: .black.opacity(0.2), radius: 4)
+        VStack(spacing: 4) {
+            ZStack {
+                Circle()
+                    .fill(Material.ultraThinMaterial)
+                    .frame(width: 42, height: 42)
+                    .shadow(color: .black.opacity(0.2), radius: 4)
+                
+                Image(nsImage: NSWorkspace.shared.icon(forFile: path.path))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 36, height: 36)
+            }
             
-            Image(nsImage: NSWorkspace.shared.icon(forFile: path.path))
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 36, height: 36)
+            Text(path.name)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .frame(width: 85)
+                .shadow(color: .black.opacity(0.8), radius: 1)
         }
         .opacity(isHovered ? 1.0 : 0.8)
         .scaleEffect(isHovered ? 1.15 : 1.0)

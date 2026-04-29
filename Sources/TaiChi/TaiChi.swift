@@ -205,7 +205,8 @@ struct TaiChiOverlayView: View {
             ZStack {
                 // Background circle
                 Circle()
-                    .fill(Material.ultraThin)
+                    .fill(Material.thinMaterial)
+                    .frame(width: config.hubSize, height: config.hubSize)
                     .opacity(0.85)
                     .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
                 // ⚠️ 极其重要的防御性注释：
@@ -255,6 +256,7 @@ struct TaiChiOverlayView: View {
                     )
                 
                 FluidCoreView()
+                    .frame(width: config.hubSize, height: config.hubSize)
                     .rotationEffect(.degrees(clickRotation))
                     .allowsHitTesting(false)
                 

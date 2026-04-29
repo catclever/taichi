@@ -28,7 +28,45 @@ class WindowManager {
             return windows
         }
         
-        // 1. Get real windows on the current Space via AXUIElement
+        // 1. Primary: Use SCShareableContent if Screen Recording is allowed (most accurate, no duplicates)
+        if PermissionsManager.shared.hasScreenRecording {
+            do {
+                let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
+                for window in content.windows {
+                    if window.windowLayer < 0 || window.windowLayer > 100 { continue }
+                    guard let ownerPID = window.owningApplication?.processID, pids.contains(ownerPID) else { continue }
+                    
+                    let bounds = window.frame
+                    // macOS shrinks windows on other Spaces to tiny thumbnails, filter them out
+                    if bounds.width < 100 || bounds.height < 50 { continue }
+                    
+                    let app = NSRunningApplication(processIdentifier: ownerPID)
+                    let appBundleID = app?.bundleIdentifier ?? ""
+                    let title = window.title ?? ""
+                    if title.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+                    
+                    if appBundleID == "com.apple.finder" {
+                        if let screen = NSScreen.screens.first(where: { $0.frame.intersects(bounds) }) {
+                            if bounds.width >= screen.frame.width - 20 && bounds.height >= screen.frame.height - 20 {
+                                continue
+                            }
+                        }
+                    }
+                    
+                    logOutput += "SC Found: \(title), Bounds: \(bounds)\n"
+                    windows.append(WindowInfo(id: window.windowID, pid: ownerPID, appBundleID: appBundleID, title: title, bounds: bounds, image: app?.icon, layer: window.windowLayer))
+                }
+                
+                if !windows.isEmpty {
+                    logOutput += "SCShareableContent returned \(windows.count) windows successfully.\n"
+                    return windows
+                }
+            } catch {
+                logOutput += "SCShareableContent failed: \(error)\n"
+            }
+        }
+        
+        // 2. Fallback: Get real windows on the current Space via AXUIElement
         for pid in pids {
             guard let app = NSRunningApplication(processIdentifier: pid) else { continue }
             let appName = app.localizedName ?? "App"
@@ -86,7 +124,17 @@ class WindowManager {
                         }
                     }
                     
-                    let dummyID = CGWindowID(UInt32(truncatingIfNeeded: bounds.origin.x.hashValue ^ bounds.origin.y.hashValue))
+                    var hasher = Hasher()
+                    hasher.combine(pid)
+                    hasher.combine(title)
+                    hasher.combine(bounds.origin.x)
+                    hasher.combine(bounds.origin.y)
+                    let dummyID = CGWindowID(UInt32(truncatingIfNeeded: hasher.finalize()))
+                    
+                    let isDuplicate = windows.contains { w in
+                        w.pid == pid && abs(w.bounds.origin.x - bounds.origin.x) < 5 && abs(w.bounds.origin.y - bounds.origin.y) < 5 && w.title == title
+                    }
+                    if isDuplicate { continue }
                     
                     logOutput += "AX Found: \(title), Bounds: \(bounds)\n"
                     windows.append(WindowInfo(id: dummyID, pid: pid, appBundleID: appBundleID, title: title, bounds: bounds, image: appIcon, layer: 0))
@@ -94,46 +142,8 @@ class WindowManager {
             }
         }
         
-        // 2. Get windows on other Spaces
-        if PermissionsManager.shared.hasScreenRecording {
-            do {
-                let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
-                for window in content.windows {
-                    if window.windowLayer < 0 || window.windowLayer > 100 { continue }
-                    guard let ownerPID = window.owningApplication?.processID, pids.contains(ownerPID) else { continue }
-                    
-                    let bounds = window.frame
-                    // macOS shrinks windows on other Spaces to tiny thumbnails
-                    if bounds.width < 100 || bounds.height < 50 { continue }
-                    
-                    let isDuplicate = windows.contains { w in
-                        w.pid == ownerPID && abs(w.bounds.origin.x - bounds.origin.x) < 20 && abs(w.bounds.origin.y - bounds.origin.y) < 20
-                    }
-                    if isDuplicate { continue }
-                    
-                    let app = NSRunningApplication(processIdentifier: ownerPID)
-                    let appName = app?.localizedName ?? "App"
-                    let appBundleID = app?.bundleIdentifier ?? ""
-                    let title = window.title ?? ""
-                    if title.trimmingCharacters(in: .whitespaces).isEmpty { continue }
-                    
-                    if appBundleID == "com.apple.finder" {
-                        if let screen = NSScreen.screens.first(where: { $0.frame.intersects(bounds) }) {
-                            if bounds.width >= screen.frame.width - 20 && bounds.height >= screen.frame.height - 20 {
-                                continue
-                            }
-                        }
-                    }
-                    
-                    logOutput += "SC Found Offscreen: \(title), Bounds: \(bounds)\n"
-                    windows.append(WindowInfo(id: window.windowID, pid: ownerPID, appBundleID: appBundleID, title: title, bounds: bounds, image: app?.icon, layer: window.windowLayer))
-                }
-            } catch {
-                logOutput += "SCShareableContent failed: \(error)\n"
-            }
-        } else {
-            // Fallback to CGWindowList if no screen recording permission
-            if let windowInfoList = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
+        // 3. Fallback: CGWindowList if no screen recording permission or SCShareableContent failed
+        if let windowInfoList = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
                 for info in windowInfoList {
                     guard let layer = info[kCGWindowLayer as String] as? Int, layer >= 0 && layer <= 100,
                           let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t,
@@ -178,7 +188,6 @@ class WindowManager {
                     windows.append(WindowInfo(id: windowID, pid: ownerPID, appBundleID: appBundleID, title: title, bounds: bounds, image: app?.icon, layer: layer))
                 }
             }
-        }
         
         return windows
     }

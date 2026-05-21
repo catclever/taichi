@@ -38,6 +38,14 @@ class TaiChiSettings: ObservableObject {
         didSet { saveCommonPaths() }
     }
     
+    @Published var httpPort: Int = 9216 {
+        didSet { saveHttpPort() }
+    }
+    
+    @Published var scriptsPath: String = ("~/Library/Services/taichi" as NSString).expandingTildeInPath {
+        didSet { saveScriptsPath() }
+    }
+    
     init() {
         loadSettings()
     }
@@ -62,6 +70,15 @@ class TaiChiSettings: ObservableObject {
            let paths = try? JSONDecoder().decode([CommonPath].self, from: data) {
             commonPaths = paths
         }
+        
+        let port = UserDefaults.standard.integer(forKey: "httpPort")
+        if port != 0 {
+            httpPort = port
+        }
+        
+        if let path = UserDefaults.standard.string(forKey: "scriptsPath") {
+            scriptsPath = path
+        }
     }
     
     private func saveResidentApps() {
@@ -80,5 +97,13 @@ class TaiChiSettings: ObservableObject {
         if let data = try? JSONEncoder().encode(commonPaths) {
             UserDefaults.standard.set(data, forKey: "commonPaths")
         }
+    }
+    
+    private func saveHttpPort() {
+        UserDefaults.standard.set(httpPort, forKey: "httpPort")
+    }
+    
+    private func saveScriptsPath() {
+        UserDefaults.standard.set(scriptsPath, forKey: "scriptsPath")
     }
 }

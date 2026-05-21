@@ -20,6 +20,11 @@ struct SettingsView: View {
                 .tabItem {
                     Label("常用路径", systemImage: "folder.fill")
                 }
+                
+            ServerSettingsTab()
+                .tabItem {
+                    Label("网关服务", systemImage: "network")
+                }
         }
         .padding()
         .frame(width: 500, height: 400)
@@ -37,6 +42,8 @@ struct ResidentAppsTab: View {
             List {
                 ForEach(settings.residentApps) { app in
                     HStack {
+                        Image(systemName: "line.3.horizontal")
+                            .foregroundColor(.gray)
                         Text(app.name)
                         Spacer()
                         Text(app.path).font(.caption).foregroundColor(.secondary)
@@ -46,6 +53,7 @@ struct ResidentAppsTab: View {
                         .buttonStyle(.plain)
                         .foregroundColor(.red)
                     }
+                    .contentShape(Rectangle())
                 }
                 .onDelete { indexSet in
                     settings.residentApps.remove(atOffsets: indexSet)
@@ -121,6 +129,8 @@ struct MonitoredAppsTab: View {
             List {
                 ForEach(settings.monitoredApps) { app in
                     HStack {
+                        Image(systemName: "line.3.horizontal")
+                            .foregroundColor(.gray)
                         Text(app.name)
                         Spacer()
                         Text(app.path).font(.caption).foregroundColor(.secondary)
@@ -130,6 +140,7 @@ struct MonitoredAppsTab: View {
                         .buttonStyle(.plain)
                         .foregroundColor(.red)
                     }
+                    .contentShape(Rectangle())
                 }
                 .onDelete { indexSet in
                     settings.monitoredApps.remove(atOffsets: indexSet)
@@ -173,6 +184,8 @@ struct CommonPathsTab: View {
             List {
                 ForEach(settings.commonPaths) { pathItem in
                     HStack {
+                        Image(systemName: "line.3.horizontal")
+                            .foregroundColor(.gray)
                         Text(pathItem.name)
                         Spacer()
                         Text(pathItem.path).font(.caption).foregroundColor(.secondary)
@@ -182,6 +195,7 @@ struct CommonPathsTab: View {
                         .buttonStyle(.plain)
                         .foregroundColor(.red)
                     }
+                    .contentShape(Rectangle())
                 }
                 .onDelete { indexSet in
                     settings.commonPaths.remove(atOffsets: indexSet)
@@ -205,6 +219,116 @@ struct CommonPathsTab: View {
             }
         }
         .padding()
+    }
+}
+
+struct ServerSettingsTab: View {
+    @ObservedObject var settings = TaiChiSettings.shared
+    
+    @State private var pendingPort: Int
+    @State private var pendingPath: String
+    @State private var showMigrationAlert = false
+    @State private var migrationMessage = ""
+    
+    init() {
+        _pendingPort = State(initialValue: TaiChiSettings.shared.httpPort)
+        _pendingPath = State(initialValue: TaiChiSettings.shared.scriptsPath)
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("配置网关服务：")
+                .font(.headline)
+            
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("HTTP 端口:")
+                        .frame(width: 100, alignment: .leading)
+                    TextField("端口号", value: $pendingPort, formatter: NumberFormatter())
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .frame(width: 100)
+                }
+                
+                HStack {
+                    Text("服务存放目录:")
+                        .frame(width: 100, alignment: .leading)
+                    TextField("路径", text: $pendingPath)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    Button("选择...") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseFiles = false
+                        panel.canChooseDirectories = true
+                        if panel.runModal() == .OK, let url = panel.url {
+                            pendingPath = url.path
+                        }
+                    }
+                }
+                
+                Button("确认并应用更改") {
+                    applyChanges()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            
+            Text("提示：修改 HTTP 端口或目录后，部分改动可能需要重启 TaiChi 才能完全生效。")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            
+            Spacer()
+        }
+        .padding()
+        .alert(isPresented: $showMigrationAlert) {
+            Alert(title: Text("操作结果"), message: Text(migrationMessage), dismissButton: .default(Text("好的")))
+        }
+    }
+    
+    private func applyChanges() {
+        let oldPath = (settings.scriptsPath as NSString).expandingTildeInPath
+        let newPath = (pendingPath as NSString).expandingTildeInPath
+        
+        let fm = FileManager.default
+        var migrated = false
+        var errorMsg: String? = nil
+        
+        if oldPath != newPath {
+            if !fm.fileExists(atPath: newPath) {
+                do {
+                    try fm.createDirectory(atPath: newPath, withIntermediateDirectories: true, attributes: nil)
+                } catch {
+                    errorMsg = "创建新目录失败：\(error.localizedDescription)"
+                }
+            }
+            
+            if errorMsg == nil && fm.fileExists(atPath: oldPath) {
+                do {
+                    let items = try fm.contentsOfDirectory(atPath: oldPath)
+                    for item in items {
+                        let src = (oldPath as NSString).appendingPathComponent(item)
+                        let dst = (newPath as NSString).appendingPathComponent(item)
+                        if !fm.fileExists(atPath: dst) {
+                            try fm.moveItem(atPath: src, toPath: dst)
+                            migrated = true
+                        }
+                    }
+                } catch {
+                    errorMsg = "文件迁移失败：\(error.localizedDescription)"
+                }
+            }
+        }
+        
+        // Save to actual settings
+        settings.httpPort = pendingPort
+        settings.scriptsPath = pendingPath
+        
+        if let err = errorMsg {
+            migrationMessage = err
+        } else if migrated {
+            migrationMessage = "配置已保存，且旧目录下的文件已自动迁移至新目录。"
+        } else {
+            migrationMessage = "配置已保存。"
+        }
+        
+        showMigrationAlert = true
     }
 }
 

@@ -35,7 +35,7 @@ struct OrbitalAppIcon: View {
     }
     
     var displayOpacity: Double {
-        if !app.isOpen { return 1.0 } // 后面统一置灰
+        if !app.isOpen { return 0.5 } // 后面统一置灰且半透明
         if app.isHidden { return 0.4 } // 隐藏状态半透明
         return 1.0 // 打开且非隐藏正常显示
     }

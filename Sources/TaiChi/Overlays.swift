@@ -302,11 +302,11 @@ struct OrbitalPathIcon: View {
     @State private var isHovered = false
     
     var angleRadians: Double {
-        let startDeg = -190.0
+        let endDeg = 10.0
         let availableArc = 200.0 // -190 to 10
         let idealStep = 28.0
         let step = totalVisible <= 1 ? 0.0 : min(idealStep, availableArc / Double(totalVisible - 1))
-        let deg = startDeg + step * Double(index)
+        let deg = endDeg - step * Double(totalVisible - 1 - index)
         return deg * .pi / 180.0
     }
     

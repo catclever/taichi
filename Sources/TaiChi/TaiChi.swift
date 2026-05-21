@@ -49,8 +49,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private var localMouseMonitor: Any?
     private var showTimer: Timer?
     private var hideTimer: Timer?
+    private var lastMouseProcessTime: TimeInterval = 0
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        ServerManager.shared.start()
+        
         let contentView = TaiChiOverlayView(config: config)
 
         let initialScreen = NSScreen.main ?? NSScreen.screens.first!
@@ -91,10 +94,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         setupMouseTracking()
     }
     
+    // [Bug Fix Document]
+    // 问题：应用在后台极大占用 CPU，原因是全局鼠标移动监听 (`.mouseMoved`) 过于频繁，每次像素级移动都触发主线程的坐标计算。
+    // 修复逻辑：引入 `lastMouseProcessTime` 进行节流控制 (Throttling)，将全局鼠标位置计算频率限制为最高每秒 20 次 (0.05秒间隔)。
+    // 注意事项：不要去掉节流逻辑。因为对于浮窗呼出判定，50ms 的延迟不仅人眼无法感知，更能大幅节省系统资源。
     private func setupMouseTracking() {
         let handler: (NSEvent) -> Void = { [weak self] (event: NSEvent) in
+            let now = ProcessInfo.processInfo.systemUptime
+            guard let self = self, now - self.lastMouseProcessTime > 0.05 else { return }
+            self.lastMouseProcessTime = now
+            
             DispatchQueue.main.async {
-                self?.handleMouseMoved(location: NSEvent.mouseLocation)
+                self.handleMouseMoved(location: NSEvent.mouseLocation)
             }
         }
         
@@ -255,7 +266,7 @@ struct TaiChiOverlayView: View {
                             }
                     )
                 
-                FluidCoreView()
+                FluidCoreView(isVisible: isVisible)
                     .frame(width: config.hubSize, height: config.hubSize)
                     .rotationEffect(.degrees(clickRotation))
                     .allowsHitTesting(false)
@@ -332,20 +343,29 @@ struct TaiChiOverlayView: View {
         }
     }
     
+    // [Bug Fix Document]
+    // 问题：常驻应用在运行时如果不处于隐藏状态，会从面板上消失，导致常驻逻辑失效。
+    // 修复逻辑：重构 `refreshApps` 的展示逻辑为两步：首先将所有常驻应用按照设置里的顺序固定展示（并绑定它们当前的运行状态和隐藏状态）；然后再追加那些非常驻但处于隐藏状态的运行中应用。这样常驻应用永远可见，且位置固定。
+    // 注意事项：不要直接依赖 `app.isHidden` 来过滤常驻应用。常驻应用无论处于何种状态（关闭、打开、隐藏）都必须进入 `combinedApps` 列表。
     private func refreshApps() {
         let runningApps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
         var result: [CombinedApp] = []
         
-        for app in runningApps {
-            if app.isHidden {
-                result.append(CombinedApp(id: "run_\(app.processIdentifier)", runningApp: app, isHidden: true, isOpen: true))
+        // 1. 优先按照设置里的顺序添加常驻应用
+        for resident in settings.residentApps {
+            if let runningApp = runningApps.first(where: { $0.bundleIdentifier == resident.id }) {
+                // 常驻应用正在运行
+                result.append(CombinedApp(id: "res_\(resident.id)", runningApp: runningApp, residentApp: resident, isHidden: runningApp.isHidden, isOpen: true))
+            } else {
+                // 常驻应用未运行
+                result.append(CombinedApp(id: "res_\(resident.id)", residentApp: resident, isHidden: false, isOpen: false))
             }
         }
         
-        for resident in settings.residentApps {
-            let isRunning = runningApps.contains { $0.bundleIdentifier == resident.id }
-            if !isRunning {
-                result.append(CombinedApp(id: "res_\(resident.id)", residentApp: resident, isHidden: false, isOpen: false))
+        // 2. 补充那些没有常驻，但是处于隐藏状态的运行中应用
+        for app in runningApps {
+            if app.isHidden && !settings.residentApps.contains(where: { $0.id == app.bundleIdentifier }) {
+                result.append(CombinedApp(id: "run_\(app.processIdentifier)", runningApp: app, isHidden: true, isOpen: true))
             }
         }
         
@@ -407,7 +427,12 @@ func resolveDimension(at location: CGPoint, hubSize: CGFloat) -> HubDimension? {
     return .defaultApps 
 }
 
+// [Bug Fix Document]
+// 问题：即使太极面板被隐藏，SwiftUI 仍然在后台持续渲染 `.repeatForever` 的动画，导致 GPU 和 CPU 持续被消耗。
+// 修复逻辑：将当前面板的 `isVisible` 状态传递给 FluidCoreView。利用 `.onChange(of: isVisible)` 监听可见性：隐藏时将动画重置为初始状态并停止；显示时再恢复循环动画。
+// 注意事项：SwiftUI 的浮窗应用在被 offset 或 opacity(0) 隐藏时，底层未必会暂停无限动画。所有 `.repeatForever` 必须显式绑定条件开关。
 struct FluidCoreView: View {
+    var isVisible: Bool
     @State private var autoRotation: Double = 0
     @State private var breathingScale: CGFloat = 1.0
     
@@ -429,12 +454,29 @@ struct FluidCoreView: View {
         }
         .rotationEffect(.degrees(autoRotation))
         .mask(Circle())
-        .onAppear {
-            withAnimation(.linear(duration: 8.0).repeatForever(autoreverses: false)) {
-                autoRotation = 360
+        .onChange(of: isVisible) { visible in
+            if visible {
+                withAnimation(.linear(duration: 8.0).repeatForever(autoreverses: false)) {
+                    autoRotation = 360
+                }
+                withAnimation(.easeInOut(duration: 3.5).repeatForever(autoreverses: true)) {
+                    breathingScale = 1.3
+                }
+            } else {
+                withAnimation(.linear(duration: 0.5)) {
+                    autoRotation = 0
+                    breathingScale = 1.0
+                }
             }
-            withAnimation(.easeInOut(duration: 3.5).repeatForever(autoreverses: true)) {
-                breathingScale = 1.3
+        }
+        .onAppear {
+            if isVisible {
+                withAnimation(.linear(duration: 8.0).repeatForever(autoreverses: false)) {
+                    autoRotation = 360
+                }
+                withAnimation(.easeInOut(duration: 3.5).repeatForever(autoreverses: true)) {
+                    breathingScale = 1.3
+                }
             }
         }
     }

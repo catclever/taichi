@@ -46,8 +46,18 @@ class TaiChiSettings: ObservableObject {
         didSet { saveScriptsPath() }
     }
     
+    @Published var activeInjectedApps: [MonitoredApp] = []
+    
     init() {
         loadSettings()
+        
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let bundleId = app.bundleIdentifier else { return }
+            Task { @MainActor in
+                self?.activeInjectedApps.removeAll { $0.id == bundleId }
+            }
+        }
     }
     
     private func loadSettings() {

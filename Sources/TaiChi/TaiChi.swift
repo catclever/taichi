@@ -13,6 +13,138 @@ struct TaiChiApp {
     }
 }
 
+// =========================================================================================
+// [BUG FIX: Resident App Window State Recognition]
+// Problem:
+// Certain apps (e.g., Zed editor) with custom UI frameworks (GPUI) maintain offscreen 
+// ghost windows (e.g., exactly 500x500) even when all visible document windows are closed. 
+// They also block macOS Accessibility APIs (AXUIElement returns error -25211). 
+// This caused the launcher to incorrectly identify them as ".offscreen" or fully visible,
+// displaying them incorrectly and preventing new windows from being opened upon click.
+//
+// Method/Logic:
+// 1. Try AXUIElement: Check for `kAXStandardWindowSubrole`. If it succeeds and returns 0 
+//    windows, the app is `.windowless` (ghost windows don't have standard subroles).
+// 2. Fallback for blocked AX (e.g., Zed): Query CGWindowListCopyWindowInfo (.optionAll). 
+//    Filter out known ghost window footprints (specifically Zed's 500x500 offscreen window).
+//    If no real windows are found, return `.windowless`.
+//
+// Caveats for future development:
+// - If Zed or other GPUI apps change their ghost window dimensions from 500x500, the 
+//   heuristic fallback will break again.
+// - Always ensure that handling a `.windowless` state uses `openApplication` to trigger
+//   a proper Reopen event rather than manually injecting AppleEvents or just activating.
+// =========================================================================================
+extension NSRunningApplication {
+    var appWindowState: AppWindowState {
+        if self.isHidden {
+            return .hidden
+        }
+        
+        let pid = self.processIdentifier
+        let axApp = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(axApp, 0.05) // 50ms timeout
+        
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value)
+        
+        var axSucceeded = false
+        if result == .success, let axWindows = value as? [AXUIElement] {
+            axSucceeded = true
+            if axWindows.isEmpty { 
+                return .windowless 
+            }
+            var hasStandardWindow = false
+            for axWindow in axWindows {
+                var subroleRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(axWindow, kAXSubroleAttribute as CFString, &subroleRef) == .success,
+                   let subrole = subroleRef as? String {
+                    if subrole == kAXStandardWindowSubrole {
+                        hasStandardWindow = true
+                        break
+                    }
+                }
+            }
+            if !hasStandardWindow {
+                return .windowless
+            }
+        }
+        
+        if axSucceeded {
+            // We know it has a standard window. Is it on the current screen?
+            let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+            guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+                return .offscreen 
+            }
+            
+            for info in windowList {
+                guard let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t, ownerPID == pid else { continue }
+                guard let layer = info[kCGWindowLayer as String] as? Int, layer >= 0 && layer <= 100 else { continue }
+                guard let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
+                      let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { continue }
+                
+                if bounds.width > 50 && bounds.height > 50 {
+                    return .activeVisible
+                }
+            }
+            return .offscreen
+        } else {
+            // Fallback for apps where AX fails (like Zed)
+            let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
+            guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+                return .windowless 
+            }
+            
+            var hasOnscreen = false
+            var hasLargeOffscreen = false
+            
+            for info in windowList {
+                guard let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t, ownerPID == pid else { continue }
+                guard let layer = info[kCGWindowLayer as String] as? Int, layer >= 0 && layer <= 100 else { continue }
+                guard let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
+                      let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { continue }
+                
+                let isOnScreen = info[kCGWindowIsOnscreen as String] as? Bool ?? false
+                
+                if isOnScreen && bounds.width > 50 && bounds.height > 50 {
+                    hasOnscreen = true
+                    break
+                }
+                
+                if !isOnScreen && bounds.width > 50 && bounds.height > 50 {
+                    // Ignore Zed's 500x500 GPUI offscreen context window
+                    if bounds.width == 500 && bounds.height == 500 { continue }
+                    hasLargeOffscreen = true
+                }
+            }
+            
+            if hasOnscreen { return .activeVisible }
+            if hasLargeOffscreen { return .offscreen }
+            return .windowless
+        }
+    }
+    
+    func reopen() {
+        let target = NSAppleEventDescriptor(processIdentifier: self.processIdentifier)
+        let event = NSAppleEventDescriptor(
+            eventClass: AEEventClass(kCoreEventClass),
+            eventID: AEEventID(kAEReopenApplication),
+            targetDescriptor: target,
+            returnID: AEReturnID(kAutoGenerateReturnID),
+            transactionID: AETransactionID(kAnyTransactionID)
+        )
+        
+        do {
+            try event.sendEvent(
+                options: [.defaultOptions],
+                timeout: 0.5
+            )
+        } catch {
+            print("Failed to send reopen event to \(self.localizedName ?? "unknown"): \(error)")
+        }
+    }
+}
+
 // 可配置参数模型 (供后续随时调整)
 // [Bug Fix Document]
 // 问题：太极窗口在无焦点（非活跃）状态下，第一下点击能量球或悬浮图标没有响应，必须点第二下才生效。
@@ -344,9 +476,9 @@ struct TaiChiOverlayView: View {
     }
     
     // [Bug Fix Document]
-    // 问题：常驻应用在运行时如果不处于隐藏状态，会从面板上消失，导致常驻逻辑失效。
-    // 修复逻辑：重构 `refreshApps` 的展示逻辑为两步：首先将所有常驻应用按照设置里的顺序固定展示（并绑定它们当前的运行状态和隐藏状态）；然后再追加那些非常驻但处于隐藏状态的运行中应用。这样常驻应用永远可见，且位置固定。
-    // 注意事项：不要直接依赖 `app.isHidden` 来过滤常驻应用。常驻应用无论处于何种状态（关闭、打开、隐藏）都必须进入 `combinedApps` 列表。
+    // 问题：常驻应用在运行但所有窗口关闭时（无窗口状态），依然显示为打开，点击无法激活出新窗口。
+    // 修复逻辑：通过 `hasNoVisibleWindows` 快速检测应用是否有实际窗口。如果没有，则在展示时标记为隐藏（`effectivelyHidden`）；在点击激活时，改用 `NSWorkspace.shared.openApplication` 发送 Reopen 事件，强制应用新建窗口。
+    // 注意事项：不要去掉对 `hasNoVisibleWindows` 的判断，也不要统一全用 `openApplication`（这会导致多空间下某些应用的聚焦行为异常）。
     private func refreshApps() {
         let runningApps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
         var result: [CombinedApp] = []
@@ -355,17 +487,29 @@ struct TaiChiOverlayView: View {
         for resident in settings.residentApps {
             if let runningApp = runningApps.first(where: { $0.bundleIdentifier == resident.id }) {
                 // 常驻应用正在运行
-                result.append(CombinedApp(id: "res_\(resident.id)", runningApp: runningApp, residentApp: resident, isHidden: runningApp.isHidden, isOpen: true))
+                let state = runningApp.appWindowState
+                result.append(CombinedApp(id: "res_\(resident.id)", runningApp: runningApp, residentApp: resident, windowState: state))
             } else {
                 // 常驻应用未运行
-                result.append(CombinedApp(id: "res_\(resident.id)", residentApp: resident, isHidden: false, isOpen: false))
+                result.append(CombinedApp(id: "res_\(resident.id)", residentApp: resident, windowState: .notRunning))
             }
         }
         
         // 2. 补充那些没有常驻，但是处于隐藏状态的运行中应用
         for app in runningApps {
             if app.isHidden && !settings.residentApps.contains(where: { $0.id == app.bundleIdentifier }) {
-                result.append(CombinedApp(id: "run_\(app.processIdentifier)", runningApp: app, isHidden: true, isOpen: true))
+                result.append(CombinedApp(id: "run_\(app.processIdentifier)", runningApp: app, windowState: .hidden))
+            }
+        }
+        
+        // 3. 补充那些被注入的动态野生应用 (activeInjectedApps)
+        for injectedApp in settings.activeInjectedApps {
+            // 如果它还没有被前面的常驻或隐藏逻辑添加进去
+            if !result.contains(where: { $0.residentApp?.id == injectedApp.id || $0.runningApp?.bundleIdentifier == injectedApp.id }) {
+                if let runningApp = runningApps.first(where: { $0.bundleIdentifier == injectedApp.id }) {
+                    // 如果正在运行，加入到外挂展示中
+                    result.append(CombinedApp(id: "inj_\(injectedApp.id)", runningApp: runningApp, residentApp: nil, windowState: runningApp.appWindowState))
+                }
             }
         }
         
@@ -375,14 +519,20 @@ struct TaiChiOverlayView: View {
     
     private func handleAppTap(_ app: CombinedApp) {
         if let runningApp = app.runningApp {
-            runningApp.unhide()
-            runningApp.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+            if app.windowState == .windowless, let url = runningApp.bundleURL {
+                let config = NSWorkspace.OpenConfiguration()
+                config.activates = true
+                NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+            } else {
+                runningApp.unhide()
+                runningApp.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+            }
         } else if let resident = app.residentApp {
             NSWorkspace.shared.open(URL(fileURLWithPath: resident.path))
         }
         NotificationCenter.default.post(name: .hideTaiChi, object: nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            refreshApps()
+            self.refreshApps()
         }
     }
     

@@ -1,11 +1,18 @@
 import SwiftUI
 
+enum AppWindowState {
+    case activeVisible
+    case offscreen
+    case windowless
+    case hidden
+    case notRunning
+}
+
 struct CombinedApp: Identifiable {
     var id: String
     var runningApp: NSRunningApplication?
     var residentApp: ResidentApp?
-    var isHidden: Bool
-    var isOpen: Bool
+    var windowState: AppWindowState
 }
 
 struct OrbitalAppIcon: View {
@@ -35,13 +42,19 @@ struct OrbitalAppIcon: View {
     }
     
     var displayOpacity: Double {
-        if !app.isOpen { return 0.5 } // 后面统一置灰且半透明
-        if app.isHidden { return 0.4 } // 隐藏状态半透明
-        return 1.0 // 打开且非隐藏正常显示
+        switch app.windowState {
+        case .activeVisible: return 1.0
+        case .offscreen: return 0.7
+        case .windowless, .hidden: return 0.4
+        case .notRunning: return 0.5
+        }
     }
     
     var isGrayscale: Bool {
-        return !app.isOpen
+        switch app.windowState {
+        case .windowless, .notRunning: return true
+        default: return false
+        }
     }
     
     var body: some View {
@@ -61,6 +74,20 @@ struct OrbitalAppIcon: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 36, height: 36)
                     .grayscale(isGrayscale ? 0.99 : 0) // 置灰
+                    .overlay(
+                        Group {
+                            if let bundleID = app.residentApp?.id ?? app.runningApp?.bundleIdentifier,
+                               TaiChiSettings.shared.activeInjectedApps.contains(where: { $0.id == bundleID }) {
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundColor(.yellow)
+                                    .padding(2)
+                                    .background(Circle().fill(Color.black.opacity(0.7)))
+                                    .offset(x: 4, y: -4)
+                            }
+                        },
+                        alignment: .topTrailing
+                    )
             } else {
                 Image(systemName: "app.fill")
                     .font(.system(size: 24))

@@ -43,6 +43,7 @@ struct MonitoredAppsOverlay: View {
                             .font(.caption2)
                             .foregroundColor(.white.opacity(0.35))
                     }
+                    .allowsHitTesting(false)
                 } else {
                     if windows.count > maxVisible {
                         ScrollCatcherView { delta in
@@ -72,24 +73,35 @@ struct MonitoredAppsOverlay: View {
                 }
             } else {
                 let apps = appList
-                ForEach(Array(apps.enumerated()), id: \.element) { index, bundleID in
-                    OrbitalGroupedAppIcon(
-                        bundleID: bundleID,
-                        windows: groupedApps[bundleID] ?? [],
-                        index: index,
-                        totalVisible: apps.count,
-                        orbRadius: orbRadius,
-                        isRevealed: isRevealed,
-                        onTap: {
-                            // Expand back to windows, maybe scroll to this app
-                            if let firstIndex = windows.firstIndex(where: { $0.appBundleID == bundleID }) {
-                                scrollOffset = firstIndex
+                if apps.isEmpty {
+                    VStack {
+                        Image(systemName: "square.dashed")
+                            .foregroundColor(.white.opacity(0.3))
+                        Text("无监控应用")
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.35))
+                    }
+                    .allowsHitTesting(false)
+                } else {
+                    ForEach(Array(apps.enumerated()), id: \.element) { index, bundleID in
+                        OrbitalGroupedAppIcon(
+                            bundleID: bundleID,
+                            windows: groupedApps[bundleID] ?? [],
+                            index: index,
+                            totalVisible: apps.count,
+                            orbRadius: orbRadius,
+                            isRevealed: isRevealed,
+                            onTap: {
+                                // Expand back to windows, maybe scroll to this app
+                                if let firstIndex = windows.firstIndex(where: { $0.appBundleID == bundleID }) {
+                                    scrollOffset = firstIndex
+                                }
+                                withAnimation(.spring()) {
+                                    mode = .windows
+                                }
                             }
-                            withAnimation(.spring()) {
-                                mode = .windows
-                            }
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }
@@ -101,7 +113,17 @@ struct MonitoredAppsOverlay: View {
     private func refreshWindows() {
         Task {
             let runningApps = NSWorkspace.shared.runningApplications
-            let monitoredPIDs = settings.monitoredApps.compactMap { app in
+            let combinedApps = settings.monitoredApps + settings.activeInjectedApps
+            var uniqueAppIDs = Set<String>()
+            var uniqueApps = [MonitoredApp]()
+            for app in combinedApps {
+                if !uniqueAppIDs.contains(app.id) {
+                    uniqueAppIDs.insert(app.id)
+                    uniqueApps.append(app)
+                }
+            }
+            
+            let monitoredPIDs = uniqueApps.compactMap { app in
                 runningApps.first(where: { $0.bundleIdentifier == app.id })?.processIdentifier
             }
             
@@ -164,6 +186,19 @@ struct OrbitalWindowIcon: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 36, height: 36)
+                        .overlay(
+                            Group {
+                                if TaiChiSettings.shared.activeInjectedApps.contains(where: { $0.id == window.appBundleID }) {
+                                    Image(systemName: "bolt.fill")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundColor(.yellow)
+                                        .padding(2)
+                                        .background(Circle().fill(Color.black.opacity(0.7)))
+                                        .offset(x: 4, y: -4)
+                                }
+                            },
+                            alignment: .topTrailing
+                        )
                 }
             }
             
@@ -189,6 +224,7 @@ struct OrbitalWindowIcon: View {
 }
 
 struct OrbitalGroupedAppIcon: View {
+    @ObservedObject var settings = TaiChiSettings.shared
     var bundleID: String
     var windows: [WindowInfo]
     var index: Int
@@ -232,6 +268,19 @@ struct OrbitalGroupedAppIcon: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 36, height: 36)
+                        .overlay(
+                            Group {
+                                if settings.activeInjectedApps.contains(where: { $0.id == bundleID }) {
+                                    Image(systemName: "bolt.fill")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundColor(.yellow)
+                                        .padding(2)
+                                        .background(Circle().fill(Color.black.opacity(0.7)))
+                                        .offset(x: 4, y: -4)
+                                }
+                            },
+                            alignment: .topTrailing
+                        )
                 }
                 
                 Text("\(windows.count)")

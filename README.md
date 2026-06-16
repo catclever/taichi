@@ -31,7 +31,39 @@ open -a TaiChi
 
 ---
 
-## 🚀 How to Start
+## 🎩 Alfred 神级联动 (Alfred Workflow)
+
+我们为 Alfred 深度定制了 API 后端，你可以用最优雅的姿势掌控一切应用。
+
+### 连招效果
+- **全局雷达搜索**：输入 `cyber`，太极会在毫秒级全盘扫描 Mac 上所有的 Chromium/Electron 架构应用。
+- **状态全息显示**：
+  - `⚡️ 已注入`：应用已开启 Cyber 模式，并会展示开放的调试端口 (Port)。
+  - `⚡︎ 正在普通运行`：应用目前是普通状态，回车将立刻强杀并重启进入 Cyber 模式。
+  - `纯文本`：应用未启动，回车直接以 Cyber 模式拉起。
+
+### 如何配置 Alfred Workflow
+1. 在 Alfred 中创建一个 Blank Workflow。
+2. 添加一个 **Script Filter** 输入节点。
+3. 配置如下：
+   - Keyword: `cyber`
+   - Language: `/bin/bash`
+   - Script: 
+     ```bash
+     curl -s "http://127.0.0.1:9216/api/launcher/filter?q={query}"
+     ```
+4. 将 Script Filter 的输出连接到一个 **Run Script** 动作节点。
+5. Run Script 配置如下：
+   - Language: `/bin/bash`
+   - Script: 
+     ```bash
+     curl -s "http://127.0.0.1:9216/api/launcher/action?payload={query}"
+     ```
+6. 大功告成！呼出 Alfred 输入 `cyber chrome` 感受一下纯正的赛博朋克吧。
+
+---
+
+## 🚀 How to Start (English)
 
 **1. Download & Install**
 - Go to the repository's Releases page and download the latest `TaiChi.dmg`.
@@ -54,3 +86,35 @@ open -a TaiChi
 - A warning prompt will pop up. Ignore it and click **"Open"** again.
 
 Once it's running, just follow the UI prompts to grant the necessary system permissions. As for how to use it... figure it out yourself!
+
+---
+
+## 🎩 Alfred God-Tier Integration (Alfred Workflow)
+
+We have built a dedicated API backend for Alfred, allowing you to control any Chromium/Electron app with elegance.
+
+### Features
+- **Global Radar Search**: Type `cyber`, and TaiChi will scan all Chromium/Electron apps on your Mac in milliseconds.
+- **Holographic Status Display**:
+  - `⚡️ 已注入 (Injected)`: The app is in Cyber mode and its remote debugging port is displayed.
+  - `⚡︎ 正在普通运行 (Running Normally)`: The app is running normally. Pressing Enter will force quit and relaunch it in Cyber mode.
+  - `Plain Text`: The app is not running. Pressing Enter will launch it directly into Cyber mode.
+
+### How to Configure Alfred Workflow
+1. Create a **Blank Workflow** in Alfred.
+2. Add a **Script Filter** input object.
+3. Configure it as follows:
+   - Keyword: `cyber`
+   - Language: `/bin/bash`
+   - Script: 
+     ```bash
+     curl -s "http://127.0.0.1:9216/api/launcher/filter?q={query}"
+     ```
+4. Connect the output of the Script Filter to a **Run Script** action object.
+5. Configure the Run Script as follows:
+   - Language: `/bin/bash`
+   - Script: 
+     ```bash
+     curl -s "http://127.0.0.1:9216/api/launcher/action?payload={query}"
+     ```
+6. Done! Fire up Alfred, type `cyber chrome` and enjoy your pure cyberpunk workflow.

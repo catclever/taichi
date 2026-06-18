@@ -16,6 +16,9 @@ let package = Package(
             name: "TaiChi",
             dependencies: [
                 .product(name: "Swifter", package: "swifter")
+            ],
+            resources: [
+                .copy("Resources")
             ]
         ),
         .testTarget(

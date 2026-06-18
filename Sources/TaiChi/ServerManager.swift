@@ -38,6 +38,8 @@ class ServerManager: @unchecked Sendable {
             isRunning = true
             print("🚀 TaiChi Gateway started on port \(port)")
             
+            HSManager.shared.initialize(taichiPort: Int(port))
+            
             startWorker()
             
             cleanupTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
@@ -196,6 +198,20 @@ class ServerManager: @unchecked Sendable {
             return self?.handleVarRequest(request) ?? .internalServerError
         }
         
+        // HS Events API
+        server["/api/event"] = { [weak self] request in
+            guard let self = self else { return .internalServerError }
+            
+            // Verify Token
+            if let authHeader = request.headers["authorization"],
+               authHeader == "Bearer \(HSManager.shared.securityToken)" {
+                // Token is valid
+                return self.handleHSEventRequest(request)
+            } else {
+                return .unauthorized
+            }
+        }
+        
         // 2. Scripting API is now handled in middleware to support deep subpaths
 
         
@@ -206,6 +222,149 @@ class ServerManager: @unchecked Sendable {
         
         server["/api/launcher/action"] = { [weak self] request in
             return self?.handleLauncherAction(request) ?? .internalServerError
+        }
+        
+        // 4. Inspector API
+        server["/api/inspector/activate"] = { [weak self] request in
+            return self?.handleInspectorActivate(request) ?? .internalServerError
+        }
+        // 5. List Config Injection API
+        server["/api/config/list/:listName"] = { [weak self] request in
+            return self?.handleListConfigRequest(request) ?? .internalServerError
+        }
+        
+        // 6. Wallpaper API
+        server["/api/wallpaper/change"] = { [weak self] request in
+            return self?.handleWallpaperChange(request) ?? .internalServerError
+        }
+        server["/api/wallpaper/previous"] = { [weak self] request in
+            return self?.handleWallpaperPrevious(request) ?? .internalServerError
+        }
+        server["/api/wallpaper/save"] = { [weak self] request in
+            return self?.handleWallpaperSave(request) ?? .internalServerError
+        }
+    }
+    
+    // MARK: - List Config API
+    
+    private func handleListConfigRequest(_ request: HttpRequest) -> HttpResponse {
+        guard request.method == "POST" else { 
+            return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) 
+        }
+        let listName = request.params[":listName"] ?? ""
+        
+        let validLists = ["floatingApps", "residentApps", "monitoredApps", "commonPaths"]
+        guard validLists.contains(listName) else {
+            return jsonResponse(["error": "Invalid list name"], statusCode: 400)
+        }
+        
+        let data = Data(request.body)
+        guard let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+              let action = json["action"] as? String,
+              let payload = json["payload"] else {
+            return jsonResponse(["error": "Invalid JSON format or missing fields"], statusCode: 400)
+        }
+        
+        // Helper to extract paths from payload
+        var targetPaths: [String] = []
+        if let pathsStr = payload as? [String] {
+            targetPaths = pathsStr
+        } else if let pathStr = payload as? String {
+            targetPaths = [pathStr]
+        } else if let obj = payload as? [String: Any], let path = obj["path"] as? String {
+            targetPaths = [path]
+        } else if let arr = payload as? [[String: Any]] {
+            targetPaths = arr.compactMap { $0["path"] as? String }
+        }
+        
+        guard !targetPaths.isEmpty else {
+            return jsonResponse(["error": "No valid paths provided in payload"], statusCode: 400)
+        }
+        
+        // Dispatch to MainActor to safely update TaiChiSettings
+        Task {
+            await updateListConfig(listName: listName, action: action, paths: targetPaths)
+        }
+        
+        return jsonResponse(["status": "ok", "message": "List \(listName) updated with action \(action)"])
+    }
+    
+    @MainActor
+    private func updateListConfig(listName: String, action: String, paths: [String]) {
+        let settings = TaiChiSettings.shared
+        
+        // Helper to build App item
+        func buildAppItem(path: String) -> (name: String, id: String)? {
+            let bundle = Bundle(path: path)
+            let name = bundle?.infoDictionary?["CFBundleName"] as? String ?? bundle?.infoDictionary?["CFBundleDisplayName"] as? String ?? (path as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+            let id = bundle?.bundleIdentifier ?? name
+            return (name, id)
+        }
+        
+        func buildPathItem(path: String) -> (name: String, id: String)? {
+            let name = (path as NSString).lastPathComponent
+            return (name, path) // CommonPath doesn't really have a bundle ID, path is unique enough
+        }
+        
+        switch listName {
+        case "floatingApps":
+            var current = settings.floatingApps
+            if action == "replace" { current.removeAll() }
+            for path in paths {
+                if action == "delete" {
+                    current.removeAll { $0.path == path }
+                } else if action == "inject" || action == "replace" {
+                    if !current.contains(where: { $0.path == path }), let item = buildAppItem(path: path) {
+                        current.append(FloatingApp(id: item.id, name: item.name, path: path))
+                    }
+                }
+            }
+            settings.floatingApps = current
+            
+        case "residentApps":
+            var current = settings.residentApps
+            if action == "replace" { current.removeAll() }
+            for path in paths {
+                if action == "delete" {
+                    current.removeAll { $0.path == path }
+                } else if action == "inject" || action == "replace" {
+                    if !current.contains(where: { $0.path == path }), let item = buildAppItem(path: path) {
+                        current.append(ResidentApp(id: item.id, name: item.name, path: path))
+                    }
+                }
+            }
+            settings.residentApps = current
+            
+        case "monitoredApps":
+            var current = settings.monitoredApps
+            if action == "replace" { current.removeAll() }
+            for path in paths {
+                if action == "delete" {
+                    current.removeAll { $0.path == path }
+                } else if action == "inject" || action == "replace" {
+                    if !current.contains(where: { $0.path == path }), let item = buildAppItem(path: path) {
+                        current.append(MonitoredApp(id: item.id, name: item.name, path: path))
+                    }
+                }
+            }
+            settings.monitoredApps = current
+            
+        case "commonPaths":
+            var current = settings.commonPaths
+            if action == "replace" { current.removeAll() }
+            for path in paths {
+                if action == "delete" {
+                    current.removeAll { $0.path == path }
+                } else if action == "inject" || action == "replace" {
+                    if !current.contains(where: { $0.path == path }), let item = buildPathItem(path: path) {
+                        current.append(CommonPath(id: UUID(), name: item.name, path: path))
+                    }
+                }
+            }
+            settings.commonPaths = current
+            
+        default:
+            break
         }
     }
     
@@ -601,8 +760,13 @@ class ServerManager: @unchecked Sendable {
             if let appToQuit = runningApps.first(where: { $0.bundleIdentifier == finalAppId }) {
                 appToQuit.terminate()
             }
+            let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: finalAppId)
+            let appName = appURL?.deletingPathExtension().lastPathComponent ?? finalAppId
             DispatchQueue.main.async { [finalAppId] in
                 TaiChiSettings.shared.activeInjectedApps.removeAll(where: { $0.id == finalAppId })
+            }
+            Task {
+                try? await HSManager.shared.sendAction(action: "hotkey.unregister", params: ["app": appName, "profileId": "taichi_inspector"])
             }
             return jsonResponse(["success": true, "action": "quit", "appId": finalAppId])
         }
@@ -624,8 +788,12 @@ class ServerManager: @unchecked Sendable {
                 app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
             } else {
                 // Not actually running? Clean up state.
+                let appName = appURL.deletingPathExtension().lastPathComponent
                 DispatchQueue.main.async { [finalAppId] in
                     TaiChiSettings.shared.activeInjectedApps.removeAll(where: { $0.id == finalAppId })
+                }
+                Task {
+                    try? await HSManager.shared.sendAction(action: "hotkey.unregister", params: ["app": appName, "profileId": "taichi_inspector"])
                 }
             }
             return jsonResponse(["success": true, "action": "activate", "appId": finalAppId])
@@ -652,6 +820,23 @@ class ServerManager: @unchecked Sendable {
                     let monitoredApp = MonitoredApp(id: finalAppId, name: appName, path: appURL.path)
                     if !TaiChiSettings.shared.activeInjectedApps.contains(where: { $0.id == finalAppId }) {
                         TaiChiSettings.shared.activeInjectedApps.append(monitoredApp)
+                        
+                        Task {
+                            let bindings: [[String: Any]] = [
+                                [
+                                    "mods": ["cmd", "alt"],
+                                    "key": "I",
+                                    "type": "lua",
+                                    "luaAction": "taichi.triggerInspector"
+                                ]
+                            ]
+                            let params: [String: Any] = [
+                                "app": appName,
+                                "profileId": "taichi_inspector",
+                                "bindings": bindings
+                            ]
+                            try? await HSManager.shared.sendAction(action: "hotkey.register", params: params)
+                        }
                     }
                 }
                 
@@ -728,4 +913,256 @@ class ServerManager: @unchecked Sendable {
         }
         return nil
     }
-} 
+    
+    private func handleHSEventRequest(_ request: HttpRequest) -> HttpResponse {
+        let bodyBytes = request.body
+        let data = Data(bodyBytes)
+        
+        do {
+            if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+               let event = json["event"] as? String {
+                let dataDict = json["data"] as? [String: Any]
+                let appName = dataDict?["appName"] as? String ?? json["appName"] as? String
+                let screenUUID = dataDict?["screenUUID"] as? String ?? json["screenUUID"] as? String
+                let path = dataDict?["path"] as? String ?? json["path"] as? String
+                let id = dataDict?["id"] as? String ?? json["id"] as? String
+                
+                var safePayload: [[String: String]]? = nil
+                if event == "screensChanged", let screens = dataDict?["screens"] as? [[String: Any]] {
+                    safePayload = screens.compactMap { screenDict in
+                        var dict = [String: String]()
+                        if let uuid = screenDict["uuid"] as? String { dict["uuid"] = uuid }
+                        if let name = screenDict["name"] as? String { dict["name"] = name }
+                        if let idNum = screenDict["id"] as? Int { dict["id"] = "\(idNum)" }
+                        return dict
+                    }
+                }
+                
+                // 将所有事件派发给 BrainManager 处理
+                Task {
+                    await BrainManager.shared.handleEvent(eventName: event, appName: appName, screenUUID: screenUUID, path: path, id: id, payload: safePayload)
+                }
+                
+                return jsonResponse(["status": "ok", "received": event])
+            }
+            return jsonResponse(["status": "error", "message": "Invalid JSON or missing 'event'"], statusCode: 400)
+        } catch {
+            return jsonResponse(["status": "error", "message": "Failed to parse JSON: \(error.localizedDescription)"], statusCode: 400)
+        }
+    }
+
+    private func handleWallpaperChange(_ request: HttpRequest) -> HttpResponse {
+        guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
+        let bodyBytes = request.body
+        let bodyData = Data(bodyBytes)
+        var screenUUID: String? = nil
+        if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
+            screenUUID = json["screenUUID"] as? String
+        }
+        
+        Task {
+            await WallpaperManager.shared.forceChange(screenUUID: screenUUID)
+        }
+        return jsonResponse(["status": "ok", "action": "change_started"])
+    }
+    
+    private func handleWallpaperPrevious(_ request: HttpRequest) -> HttpResponse {
+        guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
+        let bodyData = Data(request.body)
+        var screenUUID: String? = nil
+        if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
+            screenUUID = json["screenUUID"] as? String
+        }
+        
+        Task {
+            await WallpaperManager.shared.revertToPrevious(screenUUID: screenUUID)
+        }
+        return jsonResponse(["status": "ok", "action": "previous_started"])
+    }
+    
+    private func handleWallpaperSave(_ request: HttpRequest) -> HttpResponse {
+        guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
+        let bodyData = Data(request.body)
+        var screenUUID: String? = nil
+        if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
+            screenUUID = json["screenUUID"] as? String
+        }
+        
+        Task {
+            await WallpaperManager.shared.saveCurrent(screenUUID: screenUUID)
+        }
+        return jsonResponse(["status": "ok", "action": "save_started"])
+    }
+    
+    // MARK: - Inspector Action
+    
+    private func handleInspectorActivate(_ request: HttpRequest) -> HttpResponse {
+        guard let appId = request.queryParams.first(where: { $0.0 == "appId" })?.1 else {
+            return jsonResponse(["error": "Missing appId parameter"], statusCode: 400)
+        }
+        
+        let activeInjectedAppIDs = DispatchQueue.main.sync {
+            TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+        }
+        
+        guard activeInjectedAppIDs.contains(appId) else {
+            return jsonResponse(["error": "App is not injected"], statusCode: 400)
+        }
+        
+        // Find debugging port
+        let runningApps = NSWorkspace.shared.runningApplications
+        guard let app = runningApps.first(where: { $0.bundleIdentifier == appId }),
+              let portStr = getDebuggingPort(for: app.processIdentifier),
+              let port = Int(portStr) else {
+            return jsonResponse(["error": "Cannot find debugging port"], statusCode: 500)
+        }
+        
+        // 1. Fetch webSocketDebuggerUrl
+        guard let url = URL(string: "http://127.0.0.1:\(port)/json") else { return .internalServerError }
+        let semaphore = DispatchSemaphore(value: 0)
+        var wsUrlStr: String? = nil
+        
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            defer { semaphore.signal() }
+            guard let data = data,
+                  let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                  let firstTarget = jsonArray.first(where: { ($0["type"] as? String) == "page" }),
+                  let wsUrl = firstTarget["webSocketDebuggerUrl"] as? String else {
+                return
+            }
+            wsUrlStr = wsUrl
+        }.resume()
+        
+        _ = semaphore.wait(timeout: .now() + 5.0)
+        
+        guard let wsUrlString = wsUrlStr, let wsUrl = URL(string: wsUrlString) else {
+            return jsonResponse(["error": "Cannot get WebSocket URL"], statusCode: 500)
+        }
+        
+        Task {
+            try? await HSManager.shared.sendAction(action: "alert", params: ["text": "🕵️‍♀️ [TaiChi 寻星镜] 已启动，请在应用内双击选择元素 (Esc 取消)", "duration": 2])
+        }
+        
+        // 2. Connect WebSocket and send JS
+        let jsScript = """
+        (async function() {
+            console.log("%c[TaiChi 寻星镜] 🕵️‍♀️ 已激活！请姐姐将鼠标移动到目标区域，然后双击左键。", "color: #3186FF; font-size: 14px; font-weight: bold;");
+            return new Promise((resolve) => {
+                const overlay = document.createElement('div');
+                overlay.style.position = 'fixed';
+                overlay.style.pointerEvents = 'none';
+                overlay.style.zIndex = '9999999';
+                overlay.style.border = '2px dashed #3186FF';
+                overlay.style.backgroundColor = 'rgba(49, 134, 255, 0.1)';
+                overlay.style.transition = 'all 0.05s linear';
+                document.body.appendChild(overlay);
+
+                const moveHandler = (e) => {
+                    const target = e.composedPath()[0];
+                    if (target && target.getBoundingClientRect) {
+                        const rect = target.getBoundingClientRect();
+                        overlay.style.top = `${rect.top}px`;
+                        overlay.style.left = `${rect.left}px`;
+                        overlay.style.width = `${rect.width}px`;
+                        overlay.style.height = `${rect.height}px`;
+                    }
+                };
+
+                const cleanup = () => {
+                    document.removeEventListener('mousemove', moveHandler);
+                    document.removeEventListener('dblclick', dblClickHandler, true);
+                    document.removeEventListener('keydown', keydownHandler, true);
+                    overlay.remove();
+                };
+
+                const dblClickHandler = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const target = e.composedPath()[0];
+                    const html = target.outerHTML;
+                    cleanup();
+                    resolve(html);
+                };
+
+                const keydownHandler = (e) => {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        cleanup();
+                        resolve('__CANCELED__');
+                    }
+                };
+
+                document.addEventListener('mousemove', moveHandler);
+                document.addEventListener('dblclick', dblClickHandler, true);
+                document.addEventListener('keydown', keydownHandler, true);
+            });
+        })();
+        """
+        
+        let msg: [String: Any] = [
+            "id": 1,
+            "method": "Runtime.evaluate",
+            "params": [
+                "expression": jsScript,
+                "awaitPromise": true,
+                "returnByValue": true
+            ]
+        ]
+        
+        guard let msgData = try? JSONSerialization.data(withJSONObject: msg),
+              let msgStr = String(data: msgData, encoding: .utf8) else {
+            return .internalServerError
+        }
+        
+        let wsTask = URLSession.shared.webSocketTask(with: wsUrl)
+        wsTask.resume()
+        
+        let wsSemaphore = DispatchSemaphore(value: 0)
+        var capturedHTML: String? = nil
+        
+        wsTask.send(.string(msgStr)) { error in
+            if error != nil {
+                wsSemaphore.signal()
+                return
+            }
+            wsTask.receive { result in
+                if case .success(let message) = result, case .string(let text) = message {
+                    if let data = text.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let resultObj = json["result"] as? [String: Any],
+                       let valObj = resultObj["result"] as? [String: Any],
+                       let value = valObj["value"] as? String {
+                        capturedHTML = value
+                    }
+                }
+                wsSemaphore.signal()
+            }
+        }
+        
+        _ = wsSemaphore.wait(timeout: .now() + 60.0) // wait up to 60 seconds
+        wsTask.cancel(with: .normalClosure, reason: nil)
+        
+        if let html = capturedHTML {
+            if html == "__CANCELED__" {
+                Task {
+                    try? await HSManager.shared.sendAction(action: "alert", params: ["text": "🛑 [TaiChi 寻星镜] 已取消", "duration": 1])
+                }
+                return jsonResponse(["success": true, "canceled": true])
+            }
+            
+            DispatchQueue.main.async {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(html, forType: .string)
+                
+                Task {
+                    try? await HSManager.shared.sendAction(action: "alert", params: ["text": "✅ [TaiChi 寻星镜] 目标已锁定并复制到剪贴板！", "duration": 2])
+                }
+            }
+            return jsonResponse(["success": true, "html": html])
+        } else {
+            return jsonResponse(["error": "Failed to capture element"], statusCode: 500)
+        }
+    }
+}

@@ -1,334 +1,439 @@
 import SwiftUI
+import AppKit
 
 struct SettingsView: View {
     @ObservedObject var settings = TaiChiSettings.shared
-    @ObservedObject var permissions = PermissionsManager.shared
+    @State private var hasHammerspoon: Bool = false
+    @State private var selectedTab: String = "basic"
     
     var body: some View {
-        TabView {
-            ResidentAppsTab()
+        TabView(selection: $selectedTab) {
+            BasicFeaturesTab(selectedTab: $selectedTab)
                 .tabItem {
-                    Label("常驻应用", systemImage: "pin.fill")
+                    Label("基础功能", systemImage: "square.grid.2x2.fill")
                 }
+                .tag("basic")
             
-            MonitoredAppsTab()
-                .tabItem {
-                    Label("监控应用", systemImage: "eye.fill")
-                }
-            
-            CommonPathsTab()
-                .tabItem {
-                    Label("常用路径", systemImage: "folder.fill")
-                }
+            if hasHammerspoon {
+                HammerspoonTab()
+                    .tabItem {
+                        Label("Hammerspoon", systemImage: "hammer.fill")
+                    }
+                    .tag("hs")
+            }
                 
-            ServerSettingsTab()
+            SystemSettingsTab()
                 .tabItem {
-                    Label("网关服务", systemImage: "network")
+                    Label("系统配置", systemImage: "gearshape.fill")
                 }
+                .tag("system")
         }
         .padding()
-        .frame(width: 500, height: 400)
+        .frame(width: 600, height: 600)
+        .onAppear {
+            checkHammerspoon()
+        }
+    }
+    
+    private func checkHammerspoon() {
+        if let _ = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "org.hammerspoon.Hammerspoon") {
+            hasHammerspoon = true
+        } else {
+            hasHammerspoon = false
+        }
     }
 }
 
-struct ResidentAppsTab: View {
+// MARK: - Tab 1: 基础功能 (全局滚动)
+struct BasicFeaturesTab: View {
+    @Binding var selectedTab: String
     @ObservedObject var settings = TaiChiSettings.shared
+    @ObservedObject var permissions = PermissionsManager.shared
     
     var body: some View {
-        VStack(alignment: .leading) {
-            Text("配置常驻应用列表：")
-                .font(.headline)
-            
-            List {
-                ForEach(settings.residentApps) { app in
-                    HStack {
-                        Image(systemName: "line.3.horizontal")
-                            .foregroundColor(.gray)
-                        Text(app.name)
-                        Spacer()
-                        Text(app.path).font(.caption).foregroundColor(.secondary)
-                        Button(action: { settings.residentApps.removeAll { $0.id == app.id } }) {
-                            Image(systemName: "trash")
+        List {
+            // 常驻应用
+            Section(header: HStack {
+                Text("常驻应用").font(.headline)
+                Spacer()
+                Button(action: { addApp { settings.residentApps.append($0 as! ResidentApp) } }) {
+                    Image(systemName: "plus")
+                }.buttonStyle(.borderless)
+            }) {
+                if settings.residentApps.isEmpty {
+                    Text("暂无配置").foregroundColor(.secondary).italic()
+                } else {
+                    ForEach(settings.residentApps) { app in
+                        AppRow(name: app.name, path: app.path) {
+                            settings.residentApps.removeAll { $0.id == app.id }
                         }
-                        .buttonStyle(.plain)
-                        .foregroundColor(.red)
                     }
-                    .contentShape(Rectangle())
-                }
-                .onDelete { indexSet in
-                    settings.residentApps.remove(atOffsets: indexSet)
-                }
-                .onMove { indices, newOffset in
-                    settings.residentApps.move(fromOffsets: indices, toOffset: newOffset)
+                    .onDelete { settings.residentApps.remove(atOffsets: $0) }
+                    .onMove { settings.residentApps.move(fromOffsets: $0, toOffset: $1) }
                 }
             }
             
-            HStack {
-                Button("添加应用...") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseFiles = true
-                    panel.canChooseDirectories = false
-                    panel.allowedContentTypes = [.application]
-                    if panel.runModal() == .OK, let url = panel.url {
-                        let bundle = Bundle(url: url)
-                        let id = bundle?.bundleIdentifier ?? url.lastPathComponent
-                        let name = bundle?.infoDictionary?["CFBundleName"] as? String ?? url.deletingPathExtension().lastPathComponent
-                        
-                        if !settings.residentApps.contains(where: { $0.id == id }) {
-                            settings.residentApps.append(ResidentApp(id: id, name: name, path: url.path))
+            // 多窗口应用
+            Section(header: HStack {
+                Text("多窗口应用").font(.headline)
+                if !permissions.hasAccessibility {
+                    Button(action: {
+                        selectedTab = "system"
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                            Text("点击修复权限")
                         }
-                    }
+                        .font(.caption)
+                        .foregroundColor(.red)
+                    }.buttonStyle(.borderless)
                 }
                 Spacer()
+                Button(action: { addApp { settings.monitoredApps.append($0 as! MonitoredApp) } }) {
+                    Image(systemName: "plus")
+                }.buttonStyle(.borderless)
+            }) {
+                if settings.monitoredApps.isEmpty {
+                    Text("暂无配置").foregroundColor(.secondary).italic()
+                } else {
+                    ForEach(settings.monitoredApps) { app in
+                        AppRow(name: app.name, path: app.path) {
+                            settings.monitoredApps.removeAll { $0.id == app.id }
+                        }
+                    }
+                    .onDelete { settings.monitoredApps.remove(atOffsets: $0) }
+                    .onMove { settings.monitoredApps.move(fromOffsets: $0, toOffset: $1) }
+                }
+            }
+            
+            // 常用路径
+            Section(header: HStack {
+                Text("常用路径").font(.headline)
+                Spacer()
+                Button(action: {
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = true
+                    panel.canChooseDirectories = true
+                    if panel.runModal() == .OK, let url = panel.url {
+                        settings.commonPaths.append(CommonPath(name: url.lastPathComponent, path: url.path))
+                    }
+                }) {
+                    Image(systemName: "plus")
+                }.buttonStyle(.borderless)
+            }) {
+                if settings.commonPaths.isEmpty {
+                    Text("暂无配置").foregroundColor(.secondary).italic()
+                } else {
+                    ForEach(settings.commonPaths) { pathItem in
+                        AppRow(name: pathItem.name, path: pathItem.path) {
+                            settings.commonPaths.removeAll { $0.id == pathItem.id }
+                        }
+                    }
+                    .onDelete { settings.commonPaths.remove(atOffsets: $0) }
+                    .onMove { settings.commonPaths.move(fromOffsets: $0, toOffset: $1) }
+                }
             }
         }
-        .padding()
+    }
+    
+    private func addApp(completion: @escaping (Any) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.application]
+        if panel.runModal() == .OK, let url = panel.url {
+            let bundle = Bundle(url: url)
+            let id = bundle?.bundleIdentifier ?? url.lastPathComponent
+            let name = bundle?.infoDictionary?["CFBundleName"] as? String ?? url.deletingPathExtension().lastPathComponent
+            
+            let compStr = String(describing: completion)
+            if compStr.contains("ResidentApp") {
+                completion(ResidentApp(id: id, name: name, path: url.path))
+            } else if compStr.contains("MonitoredApp") {
+                completion(MonitoredApp(id: id, name: name, path: url.path))
+            } else {
+                completion(FloatingApp(id: id, name: name, path: url.path))
+            }
+        }
     }
 }
 
-struct MonitoredAppsTab: View {
+struct AppRow: View {
+    var name: String
+    var path: String
+    var onDelete: () -> Void
+    var body: some View {
+        HStack {
+            Image(systemName: "line.3.horizontal").foregroundColor(.gray)
+            Text(name)
+            Spacer()
+            Text(path).font(.caption).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+            Button(action: onDelete) { Image(systemName: "trash") }.buttonStyle(.plain).foregroundColor(.red)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+
+// MARK: - Tab 2: Hammerspoon
+struct HammerspoonTab: View {
+    @ObservedObject var settings = TaiChiSettings.shared
+    @State private var showDeployAlert = false
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // 将功能列表放进 List 中，保持全局滚动的优雅
+            List {
+                Section(header: Text("全局快捷操作").font(.headline)) {
+                    Toggle("激活寻星镜功能 (Inspector)", isOn: $settings.isTelescopeEnabled)
+                    if settings.isTelescopeEnabled {
+                        HStack {
+                            Text("寻星镜触发快捷键:")
+                            Spacer()
+                            HotkeyRecorder(config: $settings.hotkeyTelescope)
+                        }
+                    }
+                }
+                
+                Section(header: Text("悬浮应用管理 (Floating Apps)").font(.headline)) {
+                    Toggle("激活悬浮应用管理功能", isOn: $settings.isFloatingFeatureEnabled)
+                    if settings.isFloatingFeatureEnabled {
+                        HStack {
+                            Text("钉住/解钉 快捷键:")
+                            Spacer()
+                            HotkeyRecorder(config: $settings.hotkeyTogglePin)
+                        }
+                        HStack {
+                            Text("全局显隐 快捷键:")
+                            Spacer()
+                            HotkeyRecorder(config: $settings.hotkeyToggleAll)
+                        }
+                    }
+                }
+                
+                if settings.isFloatingFeatureEnabled {
+                    Section(header: HStack {
+                        Text("悬浮应用白名单").font(.headline)
+                        Spacer()
+                        Button(action: {
+                            let panel = NSOpenPanel()
+                            panel.canChooseFiles = true
+                            panel.canChooseDirectories = false
+                            panel.allowedContentTypes = [.application]
+                            if panel.runModal() == .OK, let url = panel.url {
+                                let bundle = Bundle(url: url)
+                                let id = bundle?.bundleIdentifier ?? url.lastPathComponent
+                                let name = bundle?.infoDictionary?["CFBundleName"] as? String ?? url.deletingPathExtension().lastPathComponent
+                                settings.floatingApps.append(FloatingApp(id: id, name: name, path: url.path))
+                            }
+                        }) {
+                            Image(systemName: "plus")
+                        }.buttonStyle(.borderless)
+                    }) {
+                        if settings.floatingApps.isEmpty {
+                            Text("暂无配置").foregroundColor(.secondary).italic()
+                        } else {
+                            ForEach(settings.floatingApps) { app in
+                                AppRow(name: app.name, path: app.path) {
+                                    settings.floatingApps.removeAll { $0.id == app.id }
+                                }
+                            }
+                            .onDelete { settings.floatingApps.remove(atOffsets: $0) }
+                            .onMove { settings.floatingApps.move(fromOffsets: $0, toOffset: $1) }
+                        }
+                    }
+                }
+                
+                WallpaperEngineSection()
+            }
+            
+            Divider()
+            
+            HStack {
+                Spacer()
+                Button("确认并应用配置") {
+                    let _ = HSDeployer.shared.deployScripts(to: settings.hsConfigPath)
+                    HSManager.shared.initialize(taichiPort: settings.httpPort)
+                    showDeployAlert = true
+                }
+                .buttonStyle(.borderedProminent)
+                .padding()
+                .alert("部署完成", isPresented: $showDeployAlert) {
+                    Button("OK", role: .cancel) { }
+                } message: {
+                    Text("脚本已成功部署并更新。")
+                }
+            }
+            .background(Color(NSColor.windowBackgroundColor))
+        }
+    }
+}
+
+// MARK: - Hotkey Recorder Component
+struct HotkeyRecorder: View {
+    @Binding var config: HotkeyConfig
+    @StateObject private var vm = HotkeyRecorderViewModel()
+    
+    var body: some View {
+        Button(action: {
+            if vm.isRecording {
+                vm.stopRecording()
+            } else {
+                vm.startRecording { newConfig in
+                    self.config = newConfig
+                }
+            }
+        }) {
+            Text(vm.isRecording ? "监听中... (按任意组合键)" : "\(config.modifiers.joined(separator: "+")) + \(config.key)")
+                .frame(width: 150)
+        }
+        .buttonStyle(.bordered)
+        .foregroundColor(vm.isRecording ? .red : .primary)
+    }
+}
+
+class HotkeyRecorderViewModel: ObservableObject {
+    @Published var isRecording = false
+    var monitor: Any?
+    
+    func startRecording(onComplete: @escaping (HotkeyConfig) -> Void) {
+        isRecording = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self else { return event }
+            var mods: [String] = []
+            if event.modifierFlags.contains(.command) { mods.append("cmd") }
+            if event.modifierFlags.contains(.control) { mods.append("ctrl") }
+            if event.modifierFlags.contains(.option) { mods.append("alt") }
+            if event.modifierFlags.contains(.shift) { mods.append("shift") }
+            
+            if let chars = event.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty {
+                let config = HotkeyConfig(modifiers: mods, key: chars)
+                onComplete(config)
+                self.stopRecording()
+                return nil // consume event
+            }
+            return event
+        }
+    }
+    
+    func stopRecording() {
+        isRecording = false
+        if let monitor = monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+    }
+}
+
+// MARK: - Tab 3: 系统配置
+struct SystemSettingsTab: View {
     @ObservedObject var settings = TaiChiSettings.shared
     @ObservedObject var permissions = PermissionsManager.shared
     
     var body: some View {
-        VStack(alignment: .leading) {
-            GroupBox(label: Text("系统权限状态").foregroundColor(permissions.hasAccessibility ? .secondary : .red)) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("太极需要系统权限来探测跨桌面的真实窗口名字：")
-                        .font(.caption)
-                    
+        VStack(alignment: .leading, spacing: 20) {
+            Text("系统配置")
+                .font(.headline)
+            
+            GroupBox(label: Text("底层服务配置")) {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Text("HTTP 网关端口:")
+                            .frame(width: 120, alignment: .leading)
+                        TextField("端口号", value: $settings.httpPort, formatter: NumberFormatter())
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .frame(width: 100)
+                    }
+                    HStack {
+                        Text("服务脚本存放目录:")
+                            .frame(width: 120, alignment: .leading)
+                        TextField("路径", text: $settings.scriptsPath)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                    }
+                    HStack {
+                        Text("HS 主配置目录:")
+                            .frame(width: 120, alignment: .leading)
+                        TextField("路径", text: $settings.hsConfigPath)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                    }
+                }
+                .padding()
+            }
+            
+            GroupBox(label: Text("系统权限状态")) {
+                VStack(alignment: .leading, spacing: 16) {
                     HStack {
                         Image(systemName: permissions.hasAccessibility ? "checkmark.circle.fill" : "xmark.circle.fill")
                             .foregroundColor(permissions.hasAccessibility ? .green : .red)
-                        Text(permissions.hasAccessibility ? "辅助功能权限（已授权）" : "辅助功能权限（未授权）")
+                        Text(permissions.hasAccessibility ? "辅助功能权限（已授权）" : "辅助功能权限（未授权，用于跨桌面探测）")
                         Spacer()
                         if !permissions.hasAccessibility {
-                            Button("去授权") {
-                                permissions.requestAccessibility()
-                            }
+                            Button("去授权") { permissions.openSystemPreferences(pane: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") }
                         }
                     }
                     
                     HStack {
                         Image(systemName: permissions.hasScreenRecording ? "checkmark.circle.fill" : "xmark.circle.fill")
                             .foregroundColor(permissions.hasScreenRecording ? .green : .yellow)
-                        Text(permissions.hasScreenRecording ? "屏幕录制权限（已授权，上帝视角开启）" : "屏幕录制权限（未授权，无法显示跨桌面真实名字）")
+                        Text(permissions.hasScreenRecording ? "屏幕录制权限（已授权）" : "屏幕录制权限（未授权，用于获取真实窗口名）")
                         Spacer()
                         if !permissions.hasScreenRecording {
-                            Button("去授权") {
-                                permissions.requestScreenRecording()
-                            }
+                            Button("去授权") { permissions.openSystemPreferences(pane: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") }
                         }
                     }
                 }
+                .padding()
             }
-            
-            Text("配置需要监控窗口的应用：")
-                .font(.headline)
-            
-            List {
-                ForEach(settings.monitoredApps) { app in
-                    HStack {
-                        Image(systemName: "line.3.horizontal")
-                            .foregroundColor(.gray)
-                        Text(app.name)
-                        Spacer()
-                        Text(app.path).font(.caption).foregroundColor(.secondary)
-                        Button(action: { settings.monitoredApps.removeAll { $0.id == app.id } }) {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundColor(.red)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .onDelete { indexSet in
-                    settings.monitoredApps.remove(atOffsets: indexSet)
-                }
-                .onMove { indices, newOffset in
-                    settings.monitoredApps.move(fromOffsets: indices, toOffset: newOffset)
-                }
-            }
-            
-            HStack {
-                Button("添加...") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseFiles = true
-                    panel.canChooseDirectories = false
-                    panel.allowedContentTypes = [.application]
-                    if panel.runModal() == .OK, let url = panel.url {
-                        let bundle = Bundle(url: url)
-                        let id = bundle?.bundleIdentifier ?? url.lastPathComponent
-                        let name = bundle?.infoDictionary?["CFBundleName"] as? String ?? url.deletingPathExtension().lastPathComponent
-                        
-                        if !settings.monitoredApps.contains(where: { $0.id == id }) {
-                            settings.monitoredApps.append(MonitoredApp(id: id, name: name, path: url.path))
-                        }
-                    }
-                }
-                Spacer()
-            }
-        }
-        .padding()
-    }
-}
-
-struct CommonPathsTab: View {
-    @ObservedObject var settings = TaiChiSettings.shared
-    
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text("配置常用路径：")
-                .font(.headline)
-            
-            List {
-                ForEach(settings.commonPaths) { pathItem in
-                    HStack {
-                        Image(systemName: "line.3.horizontal")
-                            .foregroundColor(.gray)
-                        Text(pathItem.name)
-                        Spacer()
-                        Text(pathItem.path).font(.caption).foregroundColor(.secondary)
-                        Button(action: { settings.commonPaths.removeAll { $0.id == pathItem.id } }) {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundColor(.red)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .onDelete { indexSet in
-                    settings.commonPaths.remove(atOffsets: indexSet)
-                }
-                .onMove { indices, newOffset in
-                    settings.commonPaths.move(fromOffsets: indices, toOffset: newOffset)
-                }
-            }
-            
-            HStack {
-                Button("添加路径...") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseFiles = true
-                    panel.canChooseDirectories = true
-                    if panel.runModal() == .OK, let url = panel.url {
-                        let name = url.lastPathComponent
-                        settings.commonPaths.append(CommonPath(name: name, path: url.path))
-                    }
-                }
-                Spacer()
-            }
-        }
-        .padding()
-    }
-}
-
-struct ServerSettingsTab: View {
-    @ObservedObject var settings = TaiChiSettings.shared
-    
-    @State private var pendingPort: Int
-    @State private var pendingPath: String
-    @State private var showMigrationAlert = false
-    @State private var migrationMessage = ""
-    
-    init() {
-        _pendingPort = State(initialValue: TaiChiSettings.shared.httpPort)
-        _pendingPath = State(initialValue: TaiChiSettings.shared.scriptsPath)
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("配置网关服务：")
-                .font(.headline)
-            
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("HTTP 端口:")
-                        .frame(width: 100, alignment: .leading)
-                    TextField("端口号", value: $pendingPort, formatter: NumberFormatter())
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .frame(width: 100)
-                }
-                
-                HStack {
-                    Text("服务存放目录:")
-                        .frame(width: 100, alignment: .leading)
-                    TextField("路径", text: $pendingPath)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                    Button("选择...") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseFiles = false
-                        panel.canChooseDirectories = true
-                        if panel.runModal() == .OK, let url = panel.url {
-                            pendingPath = url.path
-                        }
-                    }
-                }
-                
-                Button("确认并应用更改") {
-                    applyChanges()
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            
-            Text("提示：修改 HTTP 端口或目录后，部分改动可能需要重启 TaiChi 才能完全生效。")
-                .font(.caption)
-                .foregroundColor(.secondary)
             
             Spacer()
         }
         .padding()
-        .alert(isPresented: $showMigrationAlert) {
-            Alert(title: Text("操作结果"), message: Text(migrationMessage), dismissButton: .default(Text("好的")))
-        }
     }
+}
+
+struct WallpaperEngineSection: View {
+    @ObservedObject var settings = TaiChiSettings.shared
     
-    private func applyChanges() {
-        let oldPath = (settings.scriptsPath as NSString).expandingTildeInPath
-        let newPath = (pendingPath as NSString).expandingTildeInPath
-        
-        let fm = FileManager.default
-        var migrated = false
-        var errorMsg: String? = nil
-        
-        if oldPath != newPath {
-            if !fm.fileExists(atPath: newPath) {
-                do {
-                    try fm.createDirectory(atPath: newPath, withIntermediateDirectories: true, attributes: nil)
-                } catch {
-                    errorMsg = "创建新目录失败：\(error.localizedDescription)"
-                }
-            }
-            
-            if errorMsg == nil && fm.fileExists(atPath: oldPath) {
-                do {
-                    let items = try fm.contentsOfDirectory(atPath: oldPath)
-                    for item in items {
-                        let src = (oldPath as NSString).appendingPathComponent(item)
-                        let dst = (newPath as NSString).appendingPathComponent(item)
-                        if !fm.fileExists(atPath: dst) {
-                            try fm.moveItem(atPath: src, toPath: dst)
-                            migrated = true
+    var body: some View {
+        Section(header: Text("壁纸引擎 (Wallpaper Engine)").font(.headline)) {
+            Toggle("激活壁纸引擎服务", isOn: $settings.isWallpaperEngineEnabled)
+            if settings.isWallpaperEngineEnabled {
+                let expandedScriptsPath = (settings.scriptsPath as NSString).expandingTildeInPath
+                let configPath = (expandedScriptsPath as NSString).appendingPathComponent("wallpaper.json")
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("配置文件路径:").font(.subheadline)
+                        HStack {
+                            Text(configPath).font(.caption).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                            Button("打开配置") {
+                                NSWorkspace.shared.open(URL(fileURLWithPath: configPath))
+                            }
                         }
                     }
-                } catch {
-                    errorMsg = "文件迁移失败：\(error.localizedDescription)"
-                }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("壁纸保存路径:").font(.subheadline)
+                        HStack {
+                            Text(settings.wallpaperSaveDir).font(.caption).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                            Button("打开目录") {
+                                NSWorkspace.shared.open(URL(fileURLWithPath: settings.wallpaperSaveDir))
+                            }
+                            Button("更改") {
+                                let panel = NSOpenPanel()
+                                panel.canChooseFiles = false
+                                panel.canChooseDirectories = true
+                                panel.canCreateDirectories = true
+                                if panel.runModal() == .OK, let url = panel.url {
+                                    settings.wallpaperSaveDir = url.path
+                                }
+                            }
+                        }
+                    }
+                }.padding(.top, 5)
             }
         }
-        
-        // Save to actual settings
-        settings.httpPort = pendingPort
-        settings.scriptsPath = pendingPath
-        
-        if let err = errorMsg {
-            migrationMessage = err
-        } else if migrated {
-            migrationMessage = "配置已保存，且旧目录下的文件已自动迁移至新目录。"
-        } else {
-            migrationMessage = "配置已保存。"
-        }
-        
-        showMigrationAlert = true
     }
 }
 
@@ -346,8 +451,8 @@ class SettingsWindowManager {
         
         let settingsView = SettingsView()
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )

@@ -7,6 +7,7 @@ public class HSManager: @unchecked Sendable {
     private(set) var securityToken: String = ""
     private let hsPort = 9999
     private let hsBundleID = "org.hammerspoon.Hammerspoon"
+    private var lastReloadTime: Date = Date.distantPast
     
     private init() {}
     
@@ -51,6 +52,35 @@ public class HSManager: @unchecked Sendable {
                 launchHS(workspace: workspace, url: appURL)
             } else {
                 print("✅ [HSManager] Config unchanged and Hammerspoon is already running. Doing nothing.")
+            }
+        }
+    }
+    
+    /// 重载 Hammerspoon 配置，带 5 秒防暴击限制
+    @MainActor
+    public func reloadHammerspoonWithDebounce() {
+        let now = Date()
+        if now.timeIntervalSince(lastReloadTime) < 5 {
+            print("⏳ [HSManager] Reload ignored due to 5-second debounce.")
+            return
+        }
+        lastReloadTime = now
+        
+        let workspace = NSWorkspace.shared
+        let runningApps = workspace.runningApplications
+        let isRunning = runningApps.contains { $0.bundleIdentifier == hsBundleID }
+        
+        if isRunning {
+            print("🔄 [HSManager] Executing explicit reload script via AppleScript...")
+            let scriptSource = "tell application \"Hammerspoon\" to execute lua code \"hs.reload()\""
+            var errorDict: NSDictionary?
+            if let appleScript = NSAppleScript(source: scriptSource) {
+                appleScript.executeAndReturnError(&errorDict)
+                if let error = errorDict {
+                    print("❌ [HSManager] AppleScript reload failed: \(error)")
+                } else {
+                    print("✅ [HSManager] Hammerspoon reloaded explicitly via AppleScript.")
+                }
             }
         }
     }

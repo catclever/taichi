@@ -179,9 +179,16 @@ struct AppRow: View {
 struct HammerspoonTab: View {
     @ObservedObject var settings = TaiChiSettings.shared
     @State private var showDeployAlert = false
+    @State private var showUnsavedAlert = false
     
     var body: some View {
         VStack(spacing: 0) {
+            // 后台隐藏一个视图用于挂载 NSWindowDelegate
+            WindowCloseInterceptor(isModified: $settings.isHSConfigModified) {
+                showUnsavedAlert = true
+            }
+            .frame(width: 0, height: 0)
+            
             // 将功能列表放进 List 中，保持全局滚动的优雅
             List {
                 Section(header: Text("全局快捷操作").font(.headline)) {
@@ -254,14 +261,38 @@ struct HammerspoonTab: View {
                 Button("确认并应用配置") {
                     let _ = HSDeployer.shared.deployScripts(to: settings.hsConfigPath)
                     HSManager.shared.initialize(taichiPort: settings.httpPort)
+                    if settings.isHSConfigModified {
+                        HSManager.shared.reloadHammerspoonWithDebounce()
+                        settings.isHSConfigModified = false
+                    }
                     showDeployAlert = true
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(BorderedButtonStyle())
+                .foregroundColor(settings.isHSConfigModified ? .white : .primary)
+                .background(settings.isHSConfigModified ? Color.accentColor : Color.clear)
+                .cornerRadius(6)
                 .padding()
                 .alert("部署完成", isPresented: $showDeployAlert) {
                     Button("OK", role: .cancel) { }
                 } message: {
                     Text("脚本已成功部署并更新。")
+                }
+                .alert("检测到未保存的配置", isPresented: $showUnsavedAlert) {
+                    Button("放弃修改", role: .destructive) {
+                        settings.isHSConfigModified = false
+                        if let window = NSApp.windows.first(where: { $0.title == "Settings" || $0.identifier?.rawValue == "com_apple_SwiftUI_Settings_window" }) {
+                            window.close()
+                        }
+                    }
+                    Button("保存并重载", role: .cancel) {
+                        let _ = HSDeployer.shared.deployScripts(to: settings.hsConfigPath)
+                        HSManager.shared.initialize(taichiPort: settings.httpPort)
+                        HSManager.shared.reloadHammerspoonWithDebounce()
+                        settings.isHSConfigModified = false
+                        showDeployAlert = true
+                    }
+                } message: {
+                    Text("是否要应用这些配置？")
                 }
             }
             .background(Color(NSColor.windowBackgroundColor))
@@ -464,5 +495,50 @@ class SettingsWindowManager {
         self.window = newWindow
         newWindow.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+// MARK: - Window Close Interceptor
+struct WindowCloseInterceptor: NSViewRepresentable {
+    @Binding var isModified: Bool
+    var onCloseAttempt: () -> Void
+    
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window {
+                context.coordinator.setup(window: window)
+            }
+        }
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.isModified = isModified
+        context.coordinator.onCloseAttempt = onCloseAttempt
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
+    class Coordinator: NSObject, NSWindowDelegate {
+        var isModified: Bool = false
+        var onCloseAttempt: (() -> Void)?
+        weak var window: NSWindow?
+        
+        @MainActor
+        func setup(window: NSWindow) {
+            self.window = window
+            window.delegate = self
+        }
+        
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            if isModified {
+                onCloseAttempt?()
+                return false
+            }
+            return true
+        }
     }
 }

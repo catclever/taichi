@@ -15,10 +15,10 @@ actor BrainManager {
     
     private init() {}
     
-    private var floatingApps: [String] {
+    private var floatingApps: [FloatingApp] {
         get async {
             await MainActor.run {
-                TaiChiSettings.shared.floatingApps.map { $0.name }
+                TaiChiSettings.shared.floatingApps
             }
         }
     }
@@ -36,6 +36,7 @@ actor BrainManager {
             toggleAllFloatingApps()
             
         case "spaceChanged":
+            print("🚀 [BrainManager] spaceChanged event received: screenUUID=\(screenUUID ?? "nil")")
             if let screenUUID = screenUUID {
                 handleSpaceChanged(screenUUID: screenUUID)
             }
@@ -64,13 +65,13 @@ actor BrainManager {
     }
     
     private func toggleAllFloatingApps() {
-        isAllFloatingAppsVisible.toggle()
-        
         Task {
+            isAllFloatingAppsVisible.toggle()
             let apps = await floatingApps
+            
             for app in apps {
                 let action = isAllFloatingAppsVisible ? "showApp" : "hideApp"
-                try? await HSManager.shared.sendAction(action: action, params: ["appName": app])
+                try? await HSManager.shared.sendAction(action: action, params: ["appName": app.id])
             }
             let status = isAllFloatingAppsVisible ? "已显示" : "已隐藏"
             try? await HSManager.shared.sendAction(action: "alert", params: ["text": "👁️ 全局悬浮应用\(status)"])
@@ -82,20 +83,20 @@ actor BrainManager {
         spaceChangeTask?.cancel()
         
         spaceChangeTask = Task {
-            // 延迟 300ms 等待 macOS 动画和事件风暴平息
-            try? await Task.sleep(nanoseconds: 300_000_000)
+            // 延迟 500ms 等待 macOS 动画和事件风暴平息
+            try? await Task.sleep(nanoseconds: 500_000_000)
             
             if Task.isCancelled { return }
             
             let apps = await floatingApps
             for app in apps {
                 // 如果应用被钉住，则跳过
-                if pinnedApps.contains(app) { continue }
+                if pinnedApps.contains(app.id) || pinnedApps.contains(app.name) { continue }
                 
                 // 通知 HS 检查并隐藏
-                print("🧠 [BrainManager] Requesting HS to hide '\(app)' if on screen \(screenUUID)")
+                print("🧠 [BrainManager] Requesting HS to hide '\(app.name)' if on screen \(screenUUID)")
                 try? await HSManager.shared.sendAction(action: "hideAppIfOnScreen", params: [
-                    "appName": app,
+                    "appName": app.id,
                     "screenUUID": screenUUID
                 ])
             }

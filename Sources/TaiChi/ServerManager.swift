@@ -228,6 +228,11 @@ class ServerManager: @unchecked Sendable {
         server["/api/inspector/activate"] = { [weak self] request in
             return self?.handleInspectorActivate(request) ?? .internalServerError
         }
+        
+        // 4.5 Cyber Evaluate API
+        server["/api/cyber/evaluate"] = { [weak self] request in
+            return self?.handleCyberEvaluate(request) ?? .internalServerError
+        }
         // 5. List Config Injection API
         server["/api/config/list/:listName"] = { [weak self] request in
             return self?.handleListConfigRequest(request) ?? .internalServerError
@@ -1164,5 +1169,120 @@ class ServerManager: @unchecked Sendable {
         } else {
             return jsonResponse(["error": "Failed to capture element"], statusCode: 500)
         }
+    }
+    
+    // MARK: - Cyber Evaluate API
+    
+    private func handleCyberEvaluate(_ request: HttpRequest) -> HttpResponse {
+        guard request.method == "POST" else {
+            return jsonResponse(["error": "Method Not Allowed"], statusCode: 405)
+        }
+        
+        let bodyData = Data(request.body)
+        guard let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
+              let appId = json["appId"] as? String,
+              let script = json["script"] as? String else {
+            return jsonResponse(["error": "Missing appId or script in JSON body"], statusCode: 400)
+        }
+        
+        let activeInjectedAppIDs = DispatchQueue.main.sync {
+            TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+        }
+        
+        guard activeInjectedAppIDs.contains(appId) else {
+            return jsonResponse(["error": "App is not injected"], statusCode: 400)
+        }
+        
+        // Find debugging port
+        let runningApps = NSWorkspace.shared.runningApplications
+        guard let app = runningApps.first(where: { $0.bundleIdentifier == appId }),
+              let portStr = getDebuggingPort(for: app.processIdentifier),
+              let port = Int(portStr) else {
+            return jsonResponse(["error": "Cannot find debugging port"], statusCode: 500)
+        }
+        
+        // 1. Fetch webSocketDebuggerUrl
+        guard let url = URL(string: "http://127.0.0.1:\(port)/json") else { return .internalServerError }
+        let semaphore = DispatchSemaphore(value: 0)
+        var wsUrlStr: String? = nil
+        
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            defer { semaphore.signal() }
+            guard let data = data,
+                  let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                  let firstTarget = jsonArray.first(where: { ($0["type"] as? String) == "page" }),
+                  let wsUrl = firstTarget["webSocketDebuggerUrl"] as? String else {
+                return
+            }
+            wsUrlStr = wsUrl
+        }.resume()
+        
+        _ = semaphore.wait(timeout: .now() + 5.0)
+        
+        guard let wsUrlString = wsUrlStr, let wsUrl = URL(string: wsUrlString) else {
+            return jsonResponse(["error": "Cannot get WebSocket URL"], statusCode: 500)
+        }
+        
+        // 2. Connect WebSocket and send JS
+        let msg: [String: Any] = [
+            "id": 1,
+            "method": "Runtime.evaluate",
+            "params": [
+                "expression": script,
+                "awaitPromise": true,
+                "returnByValue": true
+            ]
+        ]
+        
+        guard let msgData = try? JSONSerialization.data(withJSONObject: msg),
+              let msgStr = String(data: msgData, encoding: .utf8) else {
+            return .internalServerError
+        }
+        
+        let wsTask = URLSession.shared.webSocketTask(with: wsUrl)
+        wsTask.resume()
+        
+        let wsSemaphore = DispatchSemaphore(value: 0)
+        var scriptResult: Any? = nil
+        var errorResult: String? = nil
+        
+        wsTask.send(.string(msgStr)) { error in
+            if let error = error {
+                errorResult = error.localizedDescription
+                wsSemaphore.signal()
+                return
+            }
+            wsTask.receive { result in
+                switch result {
+                case .success(let message):
+                    if case .string(let text) = message,
+                       let data = text.data(using: .utf8),
+                       let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        
+                        if let error = jsonResponse["error"] as? [String: Any] {
+                            errorResult = error["message"] as? String ?? "Unknown error"
+                        } else if let resultObj = jsonResponse["result"] as? [String: Any] {
+                            if let exceptionDetails = resultObj["exceptionDetails"] as? [String: Any] {
+                                errorResult = (exceptionDetails["exception"] as? [String: Any])?["description"] as? String ?? "Script threw an exception"
+                            } else if let valObj = resultObj["result"] as? [String: Any] {
+                                scriptResult = valObj["value"]
+                            }
+                        }
+                    }
+                case .failure(let error):
+                    errorResult = error.localizedDescription
+                }
+                wsSemaphore.signal()
+            }
+        }
+        
+        _ = wsSemaphore.wait(timeout: .now() + 10.0) // wait up to 10 seconds
+        wsTask.cancel(with: .normalClosure, reason: nil)
+        
+        if let error = errorResult {
+            return jsonResponse(["error": error], statusCode: 500)
+        }
+        
+        return jsonResponse(["success": true, "result": scriptResult ?? NSNull()])
     }
 }

@@ -84,6 +84,8 @@ struct HotkeyConfig: Codable, Equatable {
 class TaiChiSettings: ObservableObject {
     static let shared = TaiChiSettings()
     
+    private var isInitializing = true
+    
     @Published var residentApps: [ResidentApp] = [] {
         didSet { saveResidentApps() }
     }
@@ -113,12 +115,20 @@ class TaiChiSettings: ObservableObject {
         didSet { saveHSConfigPath() }
     }
     
+    @Published var isHSConfigModified: Bool = false
+    
     @Published var isFloatingFeatureEnabled: Bool = false {
-        didSet { saveHSFeatures() }
+        didSet { 
+            saveHSFeatures()
+            if !isInitializing { isHSConfigModified = true }
+        }
     }
     
     @Published var isTelescopeEnabled: Bool = false {
-        didSet { saveHSFeatures() }
+        didSet { 
+            saveHSFeatures()
+            if !isInitializing { isHSConfigModified = true }
+        }
     }
     
     @Published var isWallpaperEngineEnabled: Bool = false {
@@ -131,15 +141,24 @@ class TaiChiSettings: ObservableObject {
     }
     
     @Published var hotkeyTogglePin: HotkeyConfig = HotkeyConfig(modifiers: ["ctrl"], key: "H") {
-        didSet { saveHotkeys() }
+        didSet { 
+            saveHotkeys()
+            if !isInitializing { isHSConfigModified = true }
+        }
     }
     
     @Published var hotkeyToggleAll: HotkeyConfig = HotkeyConfig(modifiers: ["cmd", "ctrl"], key: "H") {
-        didSet { saveHotkeys() }
+        didSet { 
+            saveHotkeys()
+            if !isInitializing { isHSConfigModified = true }
+        }
     }
     
     @Published var hotkeyTelescope: HotkeyConfig = HotkeyConfig(modifiers: ["ctrl", "alt"], key: "I") {
-        didSet { saveHotkeys() }
+        didSet { 
+            saveHotkeys()
+            if !isInitializing { isHSConfigModified = true }
+        }
     }
     
     // Wallpaper Engine 配置
@@ -175,6 +194,7 @@ class TaiChiSettings: ObservableObject {
         }
         
         loadWallpaperEngineConfig()
+        isInitializing = false
     }
     
     func loadWallpaperEngineConfig() {
@@ -318,54 +338,63 @@ class TaiChiSettings: ObservableObject {
     }
     
     private func saveResidentApps() {
+        guard !isInitializing else { return }
         if let data = try? JSONEncoder().encode(residentApps) {
             UserDefaults.standard.set(data, forKey: "residentApps")
         }
     }
     
     private func saveMonitoredApps() {
+        guard !isInitializing else { return }
         if let data = try? JSONEncoder().encode(monitoredApps) {
             UserDefaults.standard.set(data, forKey: "monitoredApps")
         }
     }
     
     private func saveFloatingApps() {
+        guard !isInitializing else { return }
         if let data = try? JSONEncoder().encode(floatingApps) {
             UserDefaults.standard.set(data, forKey: "floatingApps")
         }
     }
     
     private func saveCommonPaths() {
+        guard !isInitializing else { return }
         if let data = try? JSONEncoder().encode(commonPaths) {
             UserDefaults.standard.set(data, forKey: "commonPaths")
         }
     }
     
     private func saveHttpPort() {
+        guard !isInitializing else { return }
         UserDefaults.standard.set(httpPort, forKey: "httpPort")
     }
     
     private func saveScriptsPath() {
+        guard !isInitializing else { return }
         UserDefaults.standard.set(scriptsPath, forKey: "scriptsPath")
     }
     
     private func saveHSConfigPath() {
+        guard !isInitializing else { return }
         UserDefaults.standard.set(hsConfigPath, forKey: "hsConfigPath")
     }
     
     private func saveHSFeatures() {
+        guard !isInitializing else { return }
         UserDefaults.standard.set(isFloatingFeatureEnabled, forKey: "isFloatingFeatureEnabled")
         UserDefaults.standard.set(isTelescopeEnabled, forKey: "isTelescopeEnabled")
     }
     
     private func saveHotkeys() {
+        guard !isInitializing else { return }
         if let d1 = try? JSONEncoder().encode(hotkeyTogglePin) { UserDefaults.standard.set(d1, forKey: "hotkeyTogglePin") }
         if let d2 = try? JSONEncoder().encode(hotkeyToggleAll) { UserDefaults.standard.set(d2, forKey: "hotkeyToggleAll") }
         if let d3 = try? JSONEncoder().encode(hotkeyTelescope) { UserDefaults.standard.set(d3, forKey: "hotkeyTelescope") }
     }
     
     private func saveWallpaperSettings() {
-
+        guard !isInitializing else { return }
         UserDefaults.standard.set(wallpaperSaveDir, forKey: "wallpaperSaveDir")
         if let d = try? JSONEncoder().encode(wallpaperChannels) { UserDefaults.standard.set(d, forKey: "wallpaperChannels") }
         if let d = try? JSONEncoder().encode(wallpaperHistory) { UserDefaults.standard.set(d, forKey: "wallpaperHistory") }

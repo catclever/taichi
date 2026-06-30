@@ -218,8 +218,9 @@ struct OrbitalWindowIcon: View {
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
-        // ⚠️ 防御性注释：绝不允许使用 .onTapGesture，必须使用 DragGesture 绕过 macOS 焦点吞噬机制，实现无焦点第一下点击必中！
-        .gesture(DragGesture(minimumDistance: 0).onEnded { _ in onTap() })
+        .onTapGesture {
+            onTap()
+        }
     }
 }
 
@@ -301,8 +302,9 @@ struct OrbitalGroupedAppIcon: View {
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
-        // ⚠️ 防御性注释：绝不允许使用 .onTapGesture，必须使用 DragGesture 绕过 macOS 焦点吞噬机制，实现无焦点第一下点击必中！
-        .gesture(DragGesture(minimumDistance: 0).onEnded { _ in onTap() })
+        .onTapGesture {
+            onTap()
+        }
     }
 }
 
@@ -400,6 +402,8 @@ struct OrbitalPathIcon: View {
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
-        .gesture(DragGesture(minimumDistance: 0).onEnded { _ in onTap() })
+        .onTapGesture {
+            onTap()
+        }
     }
 }

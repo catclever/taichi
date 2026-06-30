@@ -14,6 +14,7 @@ actor WallpaperManager {
         setupTimerLoop()
     }
     
+    private var lastFetchAttempts: [String: Date] = [:]
     private func setupTimerLoop() {
         autoChangeTask?.cancel()
         
@@ -26,16 +27,19 @@ actor WallpaperManager {
                 let config = await MainActor.run { TaiChiSettings.shared.wallpaperEngineConfig }
                 
                 if isEngineEnabled && config.enableAutoChange == true {
-                    let screens = await MainActor.run { TaiChiSettings.shared.connectedScreens }
+                    var screens = await MainActor.run { TaiChiSettings.shared.connectedScreens }
+                    if screens.isEmpty {
+                        if let fetched = try? await HSManager.shared.fetchScreens() {
+                            screens = fetched
+                            await MainActor.run { TaiChiSettings.shared.connectedScreens = fetched }
+                        }
+                    }
                     let historyMap = await MainActor.run { TaiChiSettings.shared.wallpaperHistory }
                     
                     let intervalMinutes = config.globalIntervalMinutes ?? 1440
                     let intervalSeconds = max(60, intervalMinutes * 60)
                     
                     let now = Date()
-                    let formatter = DateFormatter()
-                    formatter.dateFormat = "HH:mm"
-                    let timeString = formatter.string(from: now)
                     
                     var screensToFetch: [ScreenInfo] = []
                     
@@ -51,11 +55,31 @@ actor WallpaperManager {
                             shouldFetch = true
                         }
                         
-                        // 2. Check daily fixed time config
+                        // 2. Check daily fixed time config (with sleep compensation)
                         if let autoConfig = config.autoTimeConfig, 
-                           let times = autoConfig.times, times.contains(timeString),
+                           let times = autoConfig.times,
                            let threshold = autoConfig.checkThresholdSeconds {
-                            if elapsed >= Double(threshold) {
+                            
+                            let calendar = Calendar.current
+                            var timeMatched = false
+                            
+                            for timeStr in times {
+                                let components = timeStr.split(separator: ":")
+                                if components.count == 2,
+                                   let hour = Int(components[0]),
+                                   let minute = Int(components[1]) {
+                                    
+                                    if let targetDate = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: now) {
+                                        // If current time is past the target time today, AND we haven't updated since that target time
+                                        if now >= targetDate && lastTimestamp < targetDate {
+                                            timeMatched = true
+                                            break
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if timeMatched && elapsed >= Double(threshold) {
                                 // If specific screens are targeted
                                 if let targetedScreens = autoConfig.screens, !targetedScreens.isEmpty {
                                     if targetedScreens.contains(screen.uuid) || targetedScreens.contains(screen.name) {
@@ -67,7 +91,18 @@ actor WallpaperManager {
                             }
                         }
                         
+                        // 3. Debounce to prevent Rate Limit Death Loop
                         if shouldFetch {
+                            let lastAttempt = lastFetchAttempts[screen.uuid] ?? Date.distantPast
+                            if now.timeIntervalSince(lastAttempt) < 900 {
+                                shouldFetch = false // Skip if attempted within last 15 mins
+                            } else {
+                                lastFetchAttempts[screen.uuid] = now
+                            }
+                        }
+                        
+                        if shouldFetch {
+                            print("🚨 [WallpaperManager] screensToFetch APPEND: \(screen.uuid) (lastTimestamp: \(lastTimestamp), now: \(now))")
                             screensToFetch.append(screen)
                         }
                     }
@@ -111,12 +146,10 @@ actor WallpaperManager {
                         if FileManager.default.fileExists(atPath: destPath) {
                             await applyLocalWallpaper(path: destPath, photoId: lastEntry.photoId, screenUUID: screen.uuid, channelName: lastEntry.channelName ?? "unknown", title: lastEntry.title)
                         } else {
-                            // File missing, need to fetch
                             screensToFetch.append(screen)
                         }
                     }
                 } else {
-                    // No history, must fetch
                     screensToFetch.append(screen)
                 }
             }
@@ -220,15 +253,11 @@ actor WallpaperManager {
         print("🔍 [WallpaperManager] Fetching Unsplash URL: \(urlString)")
         
         do {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-            process.arguments = ["-s", "-H", "Authorization: Client-ID \(apiKey)", urlString]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            try process.run()
-            process.waitUntilExit()
+            guard let url = URL(string: urlString) else { return }
+            var request = URLRequest(url: url)
+            request.setValue("Client-ID \(apiKey)", forHTTPHeaderField: "Authorization")
             
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let (data, _) = try await URLSession.shared.data(for: request)
             
             if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let photoId = json["id"] as? String,
@@ -275,15 +304,15 @@ actor WallpaperManager {
                 if let data = customData {
                     try data.write(to: destURL)
                 } else {
-                    let process = Process()
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-                    process.arguments = ["-s", "-L", "-o", destPath, url.absoluteString]
-                    try process.run()
-                    process.waitUntilExit()
-                    if process.terminationStatus != 0 {
-                        print("❌ WallpaperManager: Curl download failed with status \(process.terminationStatus)")
+                    let (tempURL, imgResponse) = try await URLSession.shared.download(from: url)
+                    guard let httpResp = imgResponse as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                        print("❌ WallpaperManager: URLSession download failed with non-200 status")
                         return
                     }
+                    if FileManager.default.fileExists(atPath: destPath) {
+                        try FileManager.default.removeItem(atPath: destPath)
+                    }
+                    try FileManager.default.moveItem(at: tempURL, to: destURL)
                 }
             } catch {
                 print("❌ WallpaperManager: Download failed: \(error)")

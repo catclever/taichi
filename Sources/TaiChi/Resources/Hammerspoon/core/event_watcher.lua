@@ -36,6 +36,9 @@ function M.init(taichi_env)
                 if screenUUID then break end
             end
             
+            hs.printf("🚀 [SpaceWatcher] spaceChanged! currentSpace=%s, screenUUID=%s", tostring(currentSpace), tostring(screenUUID))
+            os.execute("echo '[SpaceWatcher] spaceChanged! currentSpace=" .. tostring(currentSpace) .. "' >> /tmp/hs_space.log")
+            
             emit("spaceChanged", {
                 currentSpaceId = currentSpace,
                 screenUUID = screenUUID

@@ -34,11 +34,11 @@ function M.hideAppIfOnScreen(appName, screenUUID)
     local app = hs.application.get(appName)
     if not app or app:isHidden() then return end
     
-    local mainWindow = app:mainWindow()
-    if mainWindow then
-        local winScreen = mainWindow:screen()
+    for _, win in ipairs(app:allWindows()) do
+        local winScreen = win:screen()
         if winScreen and winScreen:getUUID() == screenUUID then
             app:hide()
+            return
         end
     end
 end

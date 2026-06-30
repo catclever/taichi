@@ -67,6 +67,12 @@ _G.setWallpaper = function(screen, path)
         return false
     end
 
+    local name = targetScreen:name()
+    if name and (string.find(name, "BetterDisplay") or string.find(name, "Dummy")) then
+        hs.printf("WallpaperAction: Ignoring virtual screen: %s", name)
+        return false
+    end
+
     -- 解析 path 参数
     local targetPath = path
     if not targetPath then
@@ -92,27 +98,30 @@ end
 -- 同步所有屏幕的期望壁纸
 local function syncDesiredForAllScreens()
     for _, s in ipairs(hs.screen.allScreens()) do
-        local u = s:getUUID()
-        if type(u) ~= "string" or u == "" then u = tostring(s:id()) end
-        local desired = desiredByScreen[u]
-        if desired then
-            local current = s:desktopImageURL()
-            if current ~= desired then
-                hs.printf("WallpaperAction: Syncing space for screen %s to %s", u, desired)
-                s:desktopImageURL(desired)
+        local name = s:name()
+        if not (name and (string.find(name, "BetterDisplay") or string.find(name, "Dummy"))) then
+            local u = s:getUUID()
+            if type(u) ~= "string" or u == "" then u = tostring(s:id()) end
+            local desired = desiredByScreen[u]
+            if desired then
+                local current = s:desktopImageURL()
+                if current ~= desired then
+                    hs.printf("WallpaperAction: Syncing space for screen %s to %s", u, desired)
+                    s:desktopImageURL(desired)
+                end
             end
         end
     end
 end
 
--- if not spaceWatcher then
---     spaceWatcher = hs.spaces.watcher.new(function()
---         hs.timer.doAfter(0.5, function()
---             syncDesiredForAllScreens()
---         end)
---     end)
---     spaceWatcher:start()
--- end
+if not spaceWatcher then
+    spaceWatcher = hs.spaces.watcher.new(function()
+        hs.timer.doAfter(0.5, function()
+            syncDesiredForAllScreens()
+        end)
+    end)
+    spaceWatcher:start()
+end
 
 -- 注册 HTTP Bus 动作，供 TaiChi 大脑下发调用
 http_bus.registerAction("setWallpaper", function(params)

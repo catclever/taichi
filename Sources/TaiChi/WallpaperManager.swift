@@ -144,7 +144,7 @@ actor WallpaperManager {
                         let cacheDir = ("~/.cache/taichi/wallpapers/" as NSString).expandingTildeInPath
                         let destPath = (cacheDir as NSString).appendingPathComponent("\(lastEntry.photoId).jpg")
                         if FileManager.default.fileExists(atPath: destPath) {
-                            await applyLocalWallpaper(path: destPath, photoId: lastEntry.photoId, screenUUID: screen.uuid, channelName: lastEntry.channelName ?? "unknown", title: lastEntry.title)
+                            await applyLocalWallpaper(path: destPath, photoId: lastEntry.photoId, screenUUID: screen.uuid, channelName: lastEntry.channelName ?? "unknown", title: lastEntry.title, updateTimestamp: false)
                         } else {
                             screensToFetch.append(screen)
                         }
@@ -323,7 +323,7 @@ actor WallpaperManager {
         await applyLocalWallpaper(path: destPath, photoId: photoId, screenUUID: screenUUID, channelName: channelName, title: title)
     }
 
-    private func applyLocalWallpaper(path: String, photoId: String, screenUUID: String, channelName: String, title: String? = nil) async {
+    private func applyLocalWallpaper(path: String, photoId: String, screenUUID: String, channelName: String, title: String? = nil, updateTimestamp: Bool = true) async {
         do {
             try await HSManager.shared.sendAction(action: "setWallpaper", params: [
                 "screenUUID": screenUUID,
@@ -335,15 +335,18 @@ actor WallpaperManager {
                 var historyMap = TaiChiSettings.shared.wallpaperHistory
                 var history = historyMap[screenUUID] ?? []
                 if history.last?.photoId != photoId {
-                    history.append(WallpaperHistoryEntry(photoId: photoId, timestamp: now, channelName: channelName, title: title))
+                    let ts = updateTimestamp ? now : (history.last?.timestamp ?? now)
+                    history.append(WallpaperHistoryEntry(photoId: photoId, timestamp: ts, channelName: channelName, title: title))
                     if history.count > 100 { history.removeFirst() }
                     historyMap[screenUUID] = history
                     TaiChiSettings.shared.wallpaperHistory = historyMap
                 } else {
-                    // Update timestamp even if it's the same photo
-                    history[history.count - 1].timestamp = now
-                    historyMap[screenUUID] = history
-                    TaiChiSettings.shared.wallpaperHistory = historyMap
+                    if updateTimestamp {
+                        // Update timestamp even if it's the same photo
+                        history[history.count - 1].timestamp = now
+                        historyMap[screenUUID] = history
+                        TaiChiSettings.shared.wallpaperHistory = historyMap
+                    }
                 }
             }
         } catch {

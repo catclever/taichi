@@ -1045,13 +1045,13 @@ class ServerManager: @unchecked Sendable {
         }
         
         Task {
-            try? await HSManager.shared.sendAction(action: "alert", params: ["text": "🕵️‍♀️ [TaiChi 寻星镜] 已启动，请在应用内双击选择元素 (Esc 取消)", "duration": 2])
+            try? await HSManager.shared.sendAction(action: "alert", params: ["text": "🕵️‍♀️ [寻星镜] 已激活", "duration": 2])
         }
         
         // 2. Connect WebSocket and send JS
         let jsScript = """
         (async function() {
-            console.log("%c[TaiChi 寻星镜] 🕵️‍♀️ 已激活！请姐姐将鼠标移动到目标区域，然后双击左键。", "color: #3186FF; font-size: 14px; font-weight: bold;");
+            console.log("%c[TaiChi 寻星镜] 🕵️‍♀️ 已激活！滚轮/方向键切换DOM层级，双击确认。(若方向键无效请先单击页面获取焦点)", "color: #3186FF; font-size: 14px; font-weight: bold;");
             return new Promise((resolve) => {
                 const overlay = document.createElement('div');
                 overlay.style.position = 'fixed';
@@ -1059,22 +1059,105 @@ class ServerManager: @unchecked Sendable {
                 overlay.style.zIndex = '9999999';
                 overlay.style.border = '2px dashed #3186FF';
                 overlay.style.backgroundColor = 'rgba(49, 134, 255, 0.1)';
-                overlay.style.transition = 'all 0.05s linear';
                 document.body.appendChild(overlay);
 
-                const moveHandler = (e) => {
-                    const target = e.composedPath()[0];
+                const label = document.createElement('div');
+                label.style.position = 'absolute';
+                label.style.bottom = '100%';
+                label.style.left = '-2px';
+                label.style.backgroundColor = '#3186FF';
+                label.style.color = '#fff';
+                label.style.padding = '2px 6px';
+                label.style.fontSize = '12px';
+                label.style.fontFamily = 'monospace';
+                label.style.borderRadius = '4px 4px 0 0';
+                label.style.whiteSpace = 'nowrap';
+                overlay.appendChild(label);
+
+                let currentPath = [];
+                let depthIndex = 0;
+
+                const updateOverlay = () => {
+                    const target = currentPath[depthIndex];
                     if (target && target.getBoundingClientRect) {
                         const rect = target.getBoundingClientRect();
                         overlay.style.top = `${rect.top}px`;
                         overlay.style.left = `${rect.left}px`;
                         overlay.style.width = `${rect.width}px`;
                         overlay.style.height = `${rect.height}px`;
+                        
+                        let classStr = (target.className && typeof target.className === 'string') ? '.' + target.className.split(' ').filter(c=>c).join('.') : '';
+                        label.textContent = `${target.tagName.toLowerCase()}${target.id ? '#' + target.id : ''}${classStr}`;
+                    }
+                };
+
+                let currentTargetNode = null;
+                const moveHandler = (e) => {
+                    const deepest = e.composedPath()[0];
+                    if (deepest === currentTargetNode) return;
+                    currentTargetNode = deepest;
+                    currentPath = e.composedPath().filter(node => node.nodeType === 1); // Only Element nodes
+                    depthIndex = 0;
+                    updateOverlay();
+                };
+
+                let accumulatedDelta = 0;
+                const wheelHandler = (e) => {
+                    if (currentPath.length === 0) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    accumulatedDelta += e.deltaY;
+                    if (Math.abs(accumulatedDelta) > 30) {
+                        if (accumulatedDelta < 0) {
+                            // Scroll UP (or Natural Scroll down): go UP the DOM tree
+                            depthIndex = Math.min(depthIndex + 1, currentPath.length - 1);
+                        } else {
+                            // Scroll DOWN (or Natural Scroll up): go DOWN the DOM tree
+                            depthIndex = Math.max(depthIndex - 1, 0);
+                        }
+                        accumulatedDelta = 0;
+                        updateOverlay();
+                    }
+                };
+                
+                const keydownHandler = (e) => {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        cleanup();
+                        resolve('__CANCELED__');
+                    } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const target = currentPath[depthIndex] || document.activeElement;
+                        const html = target ? target.outerHTML : '';
+                        cleanup();
+                        resolve(html);
+                    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (currentPath.length === 0) {
+                            let cur = document.activeElement || document.body;
+                            let path = [];
+                            while(cur && cur.nodeType === 1) { path.push(cur); cur = cur.parentElement; }
+                            currentPath = path;
+                            depthIndex = 0;
+                        }
+                        if (currentPath.length > 0) {
+                            if (e.key === 'ArrowUp') {
+                                depthIndex = Math.min(depthIndex + 1, currentPath.length - 1);
+                            } else {
+                                depthIndex = Math.max(depthIndex - 1, 0);
+                            }
+                            updateOverlay();
+                        }
                     }
                 };
 
                 const cleanup = () => {
                     document.removeEventListener('mousemove', moveHandler);
+                    document.removeEventListener('wheel', wheelHandler, { capture: true });
                     document.removeEventListener('dblclick', dblClickHandler, true);
                     document.removeEventListener('keydown', keydownHandler, true);
                     overlay.remove();
@@ -1083,22 +1166,14 @@ class ServerManager: @unchecked Sendable {
                 const dblClickHandler = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    const target = e.composedPath()[0];
-                    const html = target.outerHTML;
+                    const target = currentPath[depthIndex] || e.composedPath()[0];
+                    const html = target ? target.outerHTML : '';
                     cleanup();
                     resolve(html);
                 };
 
-                const keydownHandler = (e) => {
-                    if (e.key === 'Escape') {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        cleanup();
-                        resolve('__CANCELED__');
-                    }
-                };
-
                 document.addEventListener('mousemove', moveHandler);
+                document.addEventListener('wheel', wheelHandler, { capture: true, passive: false });
                 document.addEventListener('dblclick', dblClickHandler, true);
                 document.addEventListener('keydown', keydownHandler, true);
             });
@@ -1126,23 +1201,36 @@ class ServerManager: @unchecked Sendable {
         let wsSemaphore = DispatchSemaphore(value: 0)
         var capturedHTML: String? = nil
         
+        func receiveLoop() {
+            wsTask.receive { result in
+                switch result {
+                case .success(let message):
+                    if case .string(let text) = message,
+                       let data = text.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let id = json["id"] as? Int, id == 1 {
+                        
+                        if let resultObj = json["result"] as? [String: Any],
+                           let valObj = resultObj["result"] as? [String: Any],
+                           let value = valObj["value"] as? String {
+                            capturedHTML = value
+                        }
+                        wsSemaphore.signal()
+                        return
+                    }
+                    receiveLoop()
+                case .failure(_):
+                    wsSemaphore.signal()
+                }
+            }
+        }
+        
         wsTask.send(.string(msgStr)) { error in
             if error != nil {
                 wsSemaphore.signal()
                 return
             }
-            wsTask.receive { result in
-                if case .success(let message) = result, case .string(let text) = message {
-                    if let data = text.data(using: .utf8),
-                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let resultObj = json["result"] as? [String: Any],
-                       let valObj = resultObj["result"] as? [String: Any],
-                       let value = valObj["value"] as? String {
-                        capturedHTML = value
-                    }
-                }
-                wsSemaphore.signal()
-            }
+            receiveLoop()
         }
         
         _ = wsSemaphore.wait(timeout: .now() + 60.0) // wait up to 60 seconds
@@ -1246,12 +1334,7 @@ class ServerManager: @unchecked Sendable {
         var scriptResult: Any? = nil
         var errorResult: String? = nil
         
-        wsTask.send(.string(msgStr)) { error in
-            if let error = error {
-                errorResult = error.localizedDescription
-                wsSemaphore.signal()
-                return
-            }
+        func receiveLoop() {
             wsTask.receive { result in
                 switch result {
                 case .success(let message):
@@ -1259,21 +1342,35 @@ class ServerManager: @unchecked Sendable {
                        let data = text.data(using: .utf8),
                        let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                         
-                        if let error = jsonResponse["error"] as? [String: Any] {
-                            errorResult = error["message"] as? String ?? "Unknown error"
-                        } else if let resultObj = jsonResponse["result"] as? [String: Any] {
-                            if let exceptionDetails = resultObj["exceptionDetails"] as? [String: Any] {
-                                errorResult = (exceptionDetails["exception"] as? [String: Any])?["description"] as? String ?? "Script threw an exception"
-                            } else if let valObj = resultObj["result"] as? [String: Any] {
-                                scriptResult = valObj["value"]
+                        if let id = jsonResponse["id"] as? Int, id == 1 {
+                            if let error = jsonResponse["error"] as? [String: Any] {
+                                errorResult = error["message"] as? String ?? "Unknown error"
+                            } else if let resultObj = jsonResponse["result"] as? [String: Any] {
+                                if let exceptionDetails = resultObj["exceptionDetails"] as? [String: Any] {
+                                    errorResult = (exceptionDetails["exception"] as? [String: Any])?["description"] as? String ?? "Script threw an exception"
+                                } else if let valObj = resultObj["result"] as? [String: Any] {
+                                    scriptResult = valObj["value"]
+                                }
                             }
+                            wsSemaphore.signal()
+                            return
                         }
                     }
+                    receiveLoop()
                 case .failure(let error):
                     errorResult = error.localizedDescription
+                    wsSemaphore.signal()
                 }
-                wsSemaphore.signal()
             }
+        }
+        
+        wsTask.send(.string(msgStr)) { error in
+            if let error = error {
+                errorResult = error.localizedDescription
+                wsSemaphore.signal()
+                return
+            }
+            receiveLoop()
         }
         
         _ = wsSemaphore.wait(timeout: .now() + 10.0) // wait up to 10 seconds

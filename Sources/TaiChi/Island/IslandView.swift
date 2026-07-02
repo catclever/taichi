@@ -171,7 +171,7 @@ struct IslandView: View {
                 Spacer()
             }
         }
-        .frame(width: stateModel.capsuleWidth, height: baseNotchHeight, alignment: .top)
+        .frame(width: stateModel.capsuleWidth, height: baseNotchHeight, alignment: .center)
     }
             
 

@@ -41,14 +41,13 @@ struct IslandView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleWidth)
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleHeight)
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.state)
-        .onHover { isHovering in
+        .onChange(of: stateModel.isHovering) { isHovering in
             handleHover(isHovering)
         }
         .onTapGesture {
             if !mediaObserver.state.isPlaying && stateModel.state != .expanded {
                 withAnimation {
                     stateModel.state = .expanded
-                    startExpandedHoverPolling()
                 }
             }
         }
@@ -63,19 +62,11 @@ struct IslandView: View {
             updateStateDimensions()
             updateArtwork(data: mediaObserver.state.artworkData)
         }
-        .onChange(of: stateModel.state) { newState in
+        .onChange(of: stateModel.state) { _ in
             updateStateDimensions()
-            if newState != .expanded {
-                IslandManager.shared.setPanelFocusedState(true)
-            }
         }
         .onChange(of: mediaObserver.state.isPlaying) { _ in
             updateStateDimensions()
-        }
-        .onChange(of: stateModel.isPinned) { pinned in
-            if !pinned {
-                IslandManager.shared.setPanelFocusedState(true)
-            }
         }
     }
     
@@ -198,7 +189,6 @@ struct IslandView: View {
     }
     
     // MARK: - Logic
-    @State private var edgeHoverTimer: Timer?
     
     private func handleHover(_ isHovering: Bool) {
         hoverTimer?.invalidate()
@@ -220,73 +210,28 @@ struct IslandView: View {
                             withAnimation {
                                 self.stateModel.state = .expanded
                             }
-                            self.startExpandedHoverPolling()
                         }
                     }
                 }
             }
         } else {
-            // Only collapse if we were expanded
+            // Mouse left the interactive area
             if stateModel.state == .expanded {
-                // Do not collapse here! Let the poller handle it!
+                if !stateModel.isPinned {
+                    hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in
+                        Task { @MainActor in
+                            withAnimation {
+                                self.stateModel.state = .idle
+                            }
+                        }
+                    }
+                }
             } else if stateModel.state == .trackChanged {
                 withAnimation {
                     stateModel.state = .idle
                 }
             }
         }
-    }
-    
-    private func startExpandedHoverPolling() {
-        edgeHoverTimer?.invalidate()
-        edgeHoverTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-            Task { @MainActor in
-                guard self.stateModel.state == .expanded else {
-                    self.edgeHoverTimer?.invalidate()
-                    return
-                }
-                
-                let mouseLocation = NSEvent.mouseLocation
-                let isInside = self.isMouseInExpandedArea(mouseLocation)
-                
-                if self.stateModel.isPinned {
-                    // When pinned, stay open but change opacity and hit testing
-                    IslandManager.shared.setPanelFocusedState(isInside)
-                    return
-                }
-                
-                if !isInside {
-                    self.edgeHoverTimer?.invalidate()
-                    self.hoverTimer?.invalidate()
-                    self.hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in
-                        Task { @MainActor in
-                            self.stateModel.state = .idle
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    private func isMouseInExpandedArea(_ location: NSPoint) -> Bool {
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(location) }) ?? NSScreen.main else {
-            return false
-        }
-        
-        let width: CGFloat = 380
-        let height: CGFloat = 160
-        
-        let screenFrame = screen.frame
-        let centerX = screenFrame.midX
-        let topY = screenFrame.maxY
-        
-        // Add a 20px horizontal buffer and 10px vertical buffer to avoid accidental closing.
-        // Also remove the strict maxY check so overshooting the top edge doesn't instantly close it.
-        let minX = centerX - (width / 2) - 20
-        let maxX = centerX + (width / 2) + 20
-        let minY = topY - height - 10
-        
-        return location.x >= minX && location.x <= maxX && location.y >= minY
     }
     
     private func handleTrackChange() {

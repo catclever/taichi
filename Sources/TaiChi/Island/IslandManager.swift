@@ -2,23 +2,22 @@ import Cocoa
 import SwiftUI
 import Combine
 
-@MainActor
-class PassThroughHostingView<Content: SwiftUI.View>: NSHostingView<Content> {
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        let stateModel = IslandStateModel.shared
-        let notchWidth = stateModel.capsuleWidth
-        let notchHeight = stateModel.capsuleHeight
-        
-        // Coordinate system: bottom-left origin. Window is 800x200.
-        // The notch is top-center. Extend height to 2000 so mouse moving into the hardware notch / menubar doesn't trigger exit.
-        let notchRect = NSRect(x: (800 - notchWidth) / 2, y: 200 - notchHeight, width: notchWidth, height: 2000)
-        
-        if notchRect.contains(point) {
-            return super.hitTest(point) ?? self
-        }
-        return nil
-    }
-}
+// MARK: - Bug Fix Documentation
+// 1. Problem Fixed: Transparent Panel Blocking Clicks
+//    The Island's transparent window panel was intercepting mouse clicks far below the notch in the idle state.
+//    Attempting to use `NSView.hitTest` within a transparent view failed because the Window Server still routes 
+//    clicks to the transparent window if `ignoresMouseEvents` is false, regardless of hitTest returning nil.
+// 2. Resolution:
+//    We removed `PassThroughHostingView` entirely. Instead, `IslandManager` sets up a global 0.05s Timer
+//    to manually check `NSEvent.mouseLocation`.
+//    - If the mouse is INSIDE the dynamically calculated notch/panel area (`isInside == true`), we set `ignoresMouseEvents = false`
+//      so the user can click the Island.
+//    - If the mouse is OUTSIDE the area, we set `ignoresMouseEvents = true` so all clicks perfectly pass through
+//      to the windows underneath. We also use this to handle the 0.5 alpha fade when the panel is pinned.
+// 3. Caveats / Future Development:
+//    - This timer runs continuously. It is very lightweight (0.05s intervals reading `NSEvent.mouseLocation`), 
+//      but ensure it doesn't cause retain cycles or layout recalculations.
+//    - `IslandView` now completely relies on `IslandStateModel.shared.isHovering` set by this timer instead of SwiftUI's `onHover`.
 
 @MainActor
 public class IslandManager: NSObject, NSWindowDelegate {
@@ -27,6 +26,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
     private var window: NSPanel?
     private var hostingView: NSHostingView<IslandView>?
     private var cancellables = Set<AnyCancellable>()
+    private var hoverTimer: Timer?
     
     private override init() {
         super.init()
@@ -49,11 +49,9 @@ public class IslandManager: NSObject, NSWindowDelegate {
         panel.isOpaque = false
         panel.delegate = self
         
-        // Remove ignoresMouseEvents so we can hover and click the notch area,
-        // but PassThroughHostingView will pass through clicks outside the notch.
-        
+        // Use a standard NSHostingView. We handle clicks dynamically by toggling ignoresMouseEvents.
         let islandView = IslandView()
-        let hostingView = PassThroughHostingView(rootView: islandView)
+        let hostingView = NSHostingView(rootView: islandView)
         // Make the hosting view transparent
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = hostingView
@@ -70,6 +68,54 @@ public class IslandManager: NSObject, NSWindowDelegate {
         
         // Add to CGSSpace to immune against Mission Control space switching
         NotchSpaceManager.shared.notchSpace.windows.insert(panel)
+        
+        startGlobalHoverTimer()
+    }
+    
+    private func startGlobalHoverTimer() {
+        hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkMouseHover()
+            }
+        }
+    }
+    
+    private func checkMouseHover() {
+        let mouseLocation = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main else {
+            return
+        }
+        
+        let stateModel = IslandStateModel.shared
+        
+        // Define the interactive area based on state
+        var hitWidth = stateModel.capsuleWidth
+        var hitHeight = stateModel.capsuleHeight
+        
+        // Add a buffer when expanded to avoid jitter
+        if stateModel.state == .expanded {
+            hitWidth += 40
+            hitHeight += 10
+        }
+        
+        let screenFrame = screen.frame
+        let centerX = screenFrame.midX
+        let topY = screenFrame.maxY
+        
+        let minX = centerX - (hitWidth / 2)
+        let maxX = centerX + (hitWidth / 2)
+        let minY = topY - hitHeight
+        
+        let isInside = mouseLocation.x >= minX && mouseLocation.x <= maxX && mouseLocation.y >= minY
+        
+        // Update hover state
+        if stateModel.isHovering != isInside {
+            stateModel.isHovering = isInside
+        }
+        
+        // When the mouse is inside the interactive area, we catch clicks.
+        // When outside, we pass clicks through to the apps behind us.
+        setPanelFocusedState(isInside)
     }
     
     @objc private func positionWindow() {
@@ -103,12 +149,15 @@ public class IslandManager: NSObject, NSWindowDelegate {
     
     public func setPanelFocusedState(_ focused: Bool) {
         guard let window = window else { return }
-        if focused {
-            window.alphaValue = 1.0
-            window.ignoresMouseEvents = false
-        } else {
+        
+        if !focused && IslandStateModel.shared.isPinned {
             window.alphaValue = 0.5
-            window.ignoresMouseEvents = true
+        } else {
+            window.alphaValue = 1.0
+        }
+        
+        if window.ignoresMouseEvents != !focused {
+            window.ignoresMouseEvents = !focused
         }
     }
 }

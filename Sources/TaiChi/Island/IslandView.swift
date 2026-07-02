@@ -73,9 +73,9 @@ struct IslandView: View {
 
     private var capsuleWidth: CGFloat {
         switch state {
-        case .idle: return baseNotchWidth + 90
-        case .trackChanged: return 500
-        case .expanded: return 500
+        case .idle: return mediaObserver.state.isPlaying ? (baseNotchWidth + 80) : baseNotchWidth
+        case .trackChanged: return baseNotchWidth + 80 // Same as playing idle width
+        case .expanded: return 300
         }
     }
     
@@ -95,7 +95,7 @@ struct IslandView: View {
     private var capsuleHeight: CGFloat {
         switch state {
         case .idle: return baseNotchHeight
-        case .trackChanged: return baseNotchHeight
+        case .trackChanged: return baseNotchHeight + 36 // Expand vertically just enough for text
         case .expanded: return 120
         }
     }
@@ -103,81 +103,60 @@ struct IslandView: View {
     // MARK: - Views
     private var idleContent: some View {
         HStack {
-            // Left: Spinning Record
-            if mediaObserver.state.isPlaying, let img = currentArtwork {
-                SpinningRecord(image: img)
-                    .frame(width: 30, height: 30)
-                    .padding(.leading, 10)
-            } else if let img = currentArtwork {
-                // Not spinning if paused
-                Image(nsImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 30, height: 30)
-                    .clipShape(Circle())
-                    .padding(.leading, 10)
-            }
-            
-            Spacer() // Center is the physical notch
-            
-            // Right: Waveform and App Icon
             if mediaObserver.state.isPlaying {
+                // Left: Spinning Record
+                if let img = currentArtwork {
+                    SpinningRecord(image: img)
+                        .frame(width: 24, height: 24) // Smaller to avoid being cramped
+                        .padding(.leading, 12)
+                }
+                
+                Spacer() // Center is the physical notch
+                
+                // Right: Waveform and App Icon
                 ZStack {
                     // App Icon (highly transparent)
                     if let appIcon = getAppIcon(bundleId: mediaObserver.state.bundleIdentifier) {
                         Image(nsImage: appIcon)
                             .resizable()
-                            .frame(width: 24, height: 24)
+                            .frame(width: 20, height: 20)
                             .opacity(0.2)
-                            // Optional slide up transition on change
                             .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .id(mediaObserver.state.bundleIdentifier) // trigger transition
+                            .id(mediaObserver.state.bundleIdentifier)
                     }
                     
                     // Waveform
                     WaveformView(color: waveformColor)
-                        .frame(width: 30, height: 20)
+                        .frame(width: 30, height: 16)
                 }
-                .padding(.trailing, 10)
+                .padding(.trailing, 12)
+            } else {
+                // Not playing: just empty spacer to keep the notch shape
+                Spacer()
             }
         }
-        .frame(width: capsuleWidth, height: capsuleHeight)
+        .frame(width: capsuleWidth, height: baseNotchHeight, alignment: .top)
     }
+            
+
     
     private var trackChangedContent: some View {
-        HStack {
-            // Left Side: Artwork (Flipped)
-            if let img = currentArtwork {
-                Image(nsImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 30, height: 30)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .rotation3DEffect(.degrees(360), axis: (x: 0, y: 1, z: 0))
-                    .animation(.easeInOut(duration: 0.8), value: mediaObserver.state.title)
-                    .padding(.leading, 10)
-            }
+        VStack(spacing: 0) {
+            // Top section: Re-use the idle layout so record and waveform stay visible
+            idleContent
             
-            VStack(alignment: .leading) {
-                Text(mediaObserver.state.title)
-                    .font(.system(size: 14, weight: .bold))
+            // Bottom section: Expanded text content (centered in the added vertical space)
+            HStack {
+                Spacer()
+                Text("\(mediaObserver.state.title) - \(mediaObserver.state.artist)")
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white)
                     .lineLimit(1)
-                Text(mediaObserver.state.artist)
-                    .font(.system(size: 12))
-                    .foregroundColor(.gray)
-                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
             }
-            .padding(.leading, 5)
-            
-            Spacer()
-            
-            if let appIcon = getAppIcon(bundleId: mediaObserver.state.bundleIdentifier) {
-                Image(nsImage: appIcon)
-                    .resizable()
-                    .frame(width: 24, height: 24)
-                    .padding(.trailing, 10)
-            }
+            .frame(height: 36) // Fill the added vertical space
+            .padding(.horizontal, 20)
         }
         .frame(width: capsuleWidth, height: capsuleHeight)
     }

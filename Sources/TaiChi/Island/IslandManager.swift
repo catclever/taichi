@@ -30,8 +30,8 @@ public class IslandManager: NSObject, NSWindowDelegate {
         panel.isOpaque = false
         panel.delegate = self
         
-        // Disable mouse interaction for the transparent parts, but SwiftUI will handle clicks on the capsule
-        panel.ignoresMouseEvents = false
+        // Disable mouse interaction completely so it doesn't block settings/other windows below it.
+        panel.ignoresMouseEvents = true
         
         let islandView = IslandView()
         let hostingView = NSHostingView(rootView: islandView)
@@ -47,6 +47,9 @@ public class IslandManager: NSObject, NSWindowDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(positionWindow), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         
         panel.makeKeyAndOrderFront(nil)
+        
+        // Add to CGSSpace to immune against Mission Control space switching
+        NotchSpaceManager.shared.notchSpace.windows.insert(panel)
     }
     
     @objc private func positionWindow() {
@@ -56,8 +59,11 @@ public class IslandManager: NSObject, NSWindowDelegate {
         // If there's a notch, safeAreaInsets.top is > 0 (typically 32 or 38).
         let notchHeight = screen.safeAreaInsets.top
         
-        // If there is no notch, we just position it a bit down from the top.
-        let yOffset = notchHeight > 0 ? notchHeight : 10
+        if notchHeight <= 0 {
+            window.alphaValue = 0.0 // Hide on non-notch screens (like external displays)
+        } else {
+            window.alphaValue = 1.0
+        }
         
         let width: CGFloat = 800
         let height: CGFloat = 200 // Allow enough height for expansion

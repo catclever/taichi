@@ -1,6 +1,6 @@
-import Foundation
 import Cocoa
 import SwiftUI
+import Combine
 
 @MainActor
 class PassThroughHostingView<Content: SwiftUI.View>: NSHostingView<Content> {
@@ -10,8 +10,8 @@ class PassThroughHostingView<Content: SwiftUI.View>: NSHostingView<Content> {
         let notchHeight = stateModel.capsuleHeight
         
         // Coordinate system: bottom-left origin. Window is 800x200.
-        // The notch is top-center.
-        let notchRect = NSRect(x: (800 - notchWidth) / 2, y: 200 - notchHeight, width: notchWidth, height: notchHeight)
+        // The notch is top-center. Extend height to 2000 so mouse moving into the hardware notch / menubar doesn't trigger exit.
+        let notchRect = NSRect(x: (800 - notchWidth) / 2, y: 200 - notchHeight, width: notchWidth, height: 2000)
         
         if notchRect.contains(point) {
             return super.hitTest(point) ?? self
@@ -26,6 +26,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
     
     private var window: NSPanel?
     private var hostingView: NSHostingView<IslandView>?
+    private var cancellables = Set<AnyCancellable>()
     
     private override init() {
         super.init()
@@ -60,6 +61,16 @@ public class IslandManager: NSObject, NSWindowDelegate {
         self.window = panel
         
         positionWindow()
+        
+        IslandStateModel.shared.$isPinned
+            .sink { [weak self] pinned in
+                if pinned {
+                    self?.window?.level = .normal
+                } else {
+                    self?.window?.level = NSWindow.Level(rawValue: Int(NSWindow.Level.mainMenu.rawValue) + 3)
+                }
+            }
+            .store(in: &cancellables)
         
         // Listen to screen changes to reposition
         NotificationCenter.default.addObserver(self, selector: #selector(positionWindow), name: NSApplication.didChangeScreenParametersNotification, object: nil)

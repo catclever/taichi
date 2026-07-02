@@ -31,6 +31,12 @@ struct IslandView: View {
             .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
             .clipShape(NotchShape(topCornerRadius: cornerRadii.top, bottomCornerRadius: cornerRadii.bottom))
         }
+        .overlay(
+            Color.clear
+                .frame(width: stateModel.capsuleWidth, height: 100) // Extends high up
+                .offset(y: -50),
+            alignment: .top
+        )
         .contentShape(Rectangle())
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleWidth)
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleHeight)
@@ -190,8 +196,21 @@ struct IslandView: View {
             
             hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
                 Task { @MainActor in
-                    self.stateModel.state = .expanded
-                    self.startExpandedHoverPolling()
+                    if self.stateModel.state == .idle {
+                        withAnimation {
+                            self.stateModel.state = .trackChanged
+                        }
+                    }
+                    
+                    // Schedule expansion after another 1.0s
+                    self.hoverTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
+                        Task { @MainActor in
+                            withAnimation {
+                                self.stateModel.state = .expanded
+                            }
+                            self.startExpandedHoverPolling()
+                        }
+                    }
                 }
             }
         } else {
@@ -199,7 +218,9 @@ struct IslandView: View {
             if stateModel.state == .expanded {
                 // Do not collapse here! Let the poller handle it!
             } else if stateModel.state == .trackChanged {
-                // Optional: handle trackChanged hover exit if needed
+                withAnimation {
+                    stateModel.state = .idle
+                }
             }
         }
     }

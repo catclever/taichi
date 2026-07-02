@@ -98,8 +98,8 @@ struct IslandView: View {
                 stateModel.capsuleWidth = baseNotchWidth + 80
                 stateModel.capsuleHeight = baseNotchHeight
             case .trackChanged:
-                stateModel.capsuleWidth = baseNotchWidth + 80
-                stateModel.capsuleHeight = baseNotchHeight + 26
+                stateModel.capsuleWidth = baseNotchWidth + (80 * notchScale)
+                stateModel.capsuleHeight = baseNotchHeight + (26 * notchScale)
             case .expanded:
                 stateModel.capsuleWidth = 380
                 stateModel.capsuleHeight = 160
@@ -125,6 +125,10 @@ struct IslandView: View {
         return 38
     }
     
+    private var notchScale: CGFloat {
+        return baseNotchHeight / 38.0
+    }
+    
     private var cornerRadii: (top: CGFloat, bottom: CGFloat) {
         let baseRadius = baseNotchHeight / 3
         return (top: baseRadius - 4, bottom: baseRadius)
@@ -137,8 +141,8 @@ struct IslandView: View {
                 // Left: Spinning Record
                 if let img = currentArtwork {
                     SpinningRecord(image: img, isPlaying: mediaObserver.state.isPlaying)
-                        .frame(width: 20, height: 20) // Smaller to avoid being cramped
-                        .padding(.leading, 12)
+                        .frame(width: 20 * notchScale, height: 20 * notchScale) // Smaller to avoid being cramped
+                        .padding(.leading, 12 * notchScale)
                 }
                 
                 Spacer() // Center is the physical notch
@@ -149,7 +153,7 @@ struct IslandView: View {
                     if let appIcon = getAppIcon(bundleId: mediaObserver.state.bundleIdentifier) {
                         Image(nsImage: appIcon)
                             .resizable()
-                            .frame(width: 20, height: 20)
+                            .frame(width: 20 * notchScale, height: 20 * notchScale)
                             .opacity(0.3)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .id(mediaObserver.state.bundleIdentifier)
@@ -157,11 +161,11 @@ struct IslandView: View {
                     
                     // Waveform (hidden or static when paused)
                     if mediaObserver.state.isPlaying {
-                        WaveformView(color: waveformColor)
-                            .frame(width: 30, height: 16)
+                        WaveformView(color: waveformColor, notchScale: notchScale)
+                            .frame(width: 30 * notchScale, height: 16 * notchScale)
                     }
                 }
-                .padding(.trailing, 12)
+                .padding(.trailing, 12 * notchScale)
             } else {
                 // Not playing and no track: just empty spacer to keep the notch shape
                 Spacer()
@@ -181,14 +185,14 @@ struct IslandView: View {
             HStack {
                 Spacer()
                 Text("\(mediaObserver.state.title) - \(mediaObserver.state.artist)")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13 * notchScale, weight: .medium))
                     .foregroundColor(.white)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer()
             }
-            .frame(height: 26) // Fill the added vertical space
-            .padding(.horizontal, 20)
+            .frame(height: 26 * notchScale) // Fill the added vertical space
+            .padding(.horizontal, 20 * notchScale)
         }
         .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
     }
@@ -386,14 +390,15 @@ struct SpinningRecord: View {
 
 struct WaveformView: View {
     var color: Color
+    var notchScale: CGFloat = 1.0
     @State private var isAnimating = false
     
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 3 * notchScale) {
             ForEach(0..<4) { i in
                 Capsule()
                     .fill(color)
-                    .frame(width: 3, height: isAnimating ? CGFloat.random(in: 5...20) : 5)
+                    .frame(width: 3 * notchScale, height: isAnimating ? CGFloat.random(in: 5...20) * notchScale : 5 * notchScale)
                     .animation(.easeInOut(duration: 0.3).repeatForever().delay(Double(i) * 0.1), value: isAnimating)
             }
         }

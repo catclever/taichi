@@ -19,6 +19,11 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 # Copy executable
 cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/"
 
+# Copy Resources
+if [ -d "Sources/TaiChi/Resources" ]; then
+    cp -R Sources/TaiChi/Resources/* "$APP_BUNDLE/Contents/Resources/"
+fi
+
 # Generate and build AppIcon.icns
 echo "Generating AppIcon..."
 if [ -f "generate_icon.swift" ]; then

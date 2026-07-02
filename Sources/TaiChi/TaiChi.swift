@@ -186,6 +186,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         ServerManager.shared.start()
         Task { await WallpaperManager.shared.startEngine() }
+        IslandManager.shared.setup()
         
         let contentView = TaiChiOverlayView(config: config)
 

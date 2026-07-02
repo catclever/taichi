@@ -141,7 +141,7 @@ struct IslandView: View {
                 // Left: Spinning Record
                 if let img = currentArtwork {
                     SpinningRecord(image: img, isPlaying: mediaObserver.state.isPlaying)
-                        .frame(width: 20 * notchScale, height: 20 * notchScale) // Smaller to avoid being cramped
+                        .frame(width: 26 * notchScale, height: 26 * notchScale) // Increased from 20
                         .padding(.leading, 12 * notchScale)
                 }
                 
@@ -153,7 +153,7 @@ struct IslandView: View {
                     if let appIcon = getAppIcon(bundleId: mediaObserver.state.bundleIdentifier) {
                         Image(nsImage: appIcon)
                             .resizable()
-                            .frame(width: 20 * notchScale, height: 20 * notchScale)
+                            .frame(width: 26 * notchScale, height: 26 * notchScale) // Increased from 20
                             .opacity(0.3)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .id(mediaObserver.state.bundleIdentifier)

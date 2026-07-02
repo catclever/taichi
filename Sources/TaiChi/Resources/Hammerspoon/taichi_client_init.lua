@@ -115,8 +115,16 @@ function M.bindHotkeys(keys)
     local allMods = keys.toggleAll and keys.toggleAll[1] or {"cmd", "ctrl"}
     local allKey = keys.toggleAll and keys.toggleAll[2] or "H"
     
+    M.hotkey_refs = M.hotkey_refs or {}
+    
+    -- 清理旧热键
+    for _, ref in pairs(M.hotkey_refs) do
+        if ref then ref:delete() end
+    end
+    M.hotkey_refs = {}
+
     -- 钉住/解钉 当前应用
-    hs.hotkey.bind(pinMods, pinKey, function()
+    M.hotkey_refs.pin = hs.hotkey.bind(pinMods, pinKey, function()
         local app = hs.application.frontmostApplication()
         if app then
             M.postEvent("togglePin", { appName = app:name() })
@@ -124,7 +132,7 @@ function M.bindHotkeys(keys)
     end)
 
     -- 全局显隐所有浮动应用
-    hs.hotkey.bind(allMods, allKey, function()
+    M.hotkey_refs.all = hs.hotkey.bind(allMods, allKey, function()
         M.postEvent("toggleAllFloatingApps", {})
     end)
 end

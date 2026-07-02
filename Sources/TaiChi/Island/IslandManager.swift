@@ -3,6 +3,13 @@ import Cocoa
 import SwiftUI
 
 @MainActor
+class PassThroughHostingView<Content: SwiftUI.View>: NSHostingView<Content> {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        return nil // Never intercept clicks
+    }
+}
+
+@MainActor
 public class IslandManager: NSObject, NSWindowDelegate {
     public static let shared = IslandManager()
     
@@ -23,7 +30,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
             defer: false
         )
         
-        panel.level = .screenSaver
+        panel.level = NSWindow.Level(rawValue: Int(NSWindow.Level.mainMenu.rawValue) + 3)
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -34,7 +41,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
         panel.ignoresMouseEvents = true
         
         let islandView = IslandView()
-        let hostingView = NSHostingView(rootView: islandView)
+        let hostingView = PassThroughHostingView(rootView: islandView)
         // Make the hosting view transparent
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = hostingView
@@ -59,8 +66,12 @@ public class IslandManager: NSObject, NSWindowDelegate {
         // If there's a notch, safeAreaInsets.top is > 0 (typically 32 or 38).
         let notchHeight = screen.safeAreaInsets.top
         
-        if notchHeight <= 0 {
-            window.alphaValue = 0.0 // Hide on non-notch screens (like external displays)
+        // Detect if the display is being mirrored
+        let mainDisplayId = CGMainDisplayID()
+        let isMirrored = CGDisplayIsInMirrorSet(mainDisplayId) != 0
+        
+        if notchHeight <= 0 || isMirrored {
+            window.alphaValue = 0.0 // Hide on non-notch screens or when mirrored
         } else {
             window.alphaValue = 1.0
         }

@@ -72,8 +72,9 @@ struct IslandView: View {
     }
 
     private var capsuleWidth: CGFloat {
+        if !mediaObserver.state.isPlaying { return baseNotchWidth }
         switch state {
-        case .idle: return mediaObserver.state.isPlaying ? (baseNotchWidth + 80) : baseNotchWidth
+        case .idle: return baseNotchWidth + 80
         case .trackChanged: return baseNotchWidth + 80 // Same as playing idle width
         case .expanded: return 300
         }
@@ -93,6 +94,7 @@ struct IslandView: View {
     }
 
     private var capsuleHeight: CGFloat {
+        if !mediaObserver.state.isPlaying { return baseNotchHeight }
         switch state {
         case .idle: return baseNotchHeight
         case .trackChanged: return baseNotchHeight + 36 // Expand vertically just enough for text
@@ -107,7 +109,7 @@ struct IslandView: View {
                 // Left: Spinning Record
                 if let img = currentArtwork {
                     SpinningRecord(image: img)
-                        .frame(width: 24, height: 24) // Smaller to avoid being cramped
+                        .frame(width: 20, height: 20) // Smaller to avoid being cramped
                         .padding(.leading, 12)
                 }
                 
@@ -164,6 +166,7 @@ struct IslandView: View {
     // MARK: - Logic
     private func handleTrackChange() {
         guard !mediaObserver.state.title.isEmpty else { return }
+        guard mediaObserver.state.isPlaying else { return }
         
         withAnimation {
             state = .trackChanged

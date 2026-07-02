@@ -97,7 +97,7 @@ struct IslandView: View {
         if !mediaObserver.state.isPlaying { return baseNotchHeight }
         switch state {
         case .idle: return baseNotchHeight
-        case .trackChanged: return baseNotchHeight + 36 // Expand vertically just enough for text
+        case .trackChanged: return baseNotchHeight + 26 // Expand vertically just enough for text
         case .expanded: return 120
         }
     }
@@ -122,7 +122,7 @@ struct IslandView: View {
                         Image(nsImage: appIcon)
                             .resizable()
                             .frame(width: 20, height: 20)
-                            .opacity(0.2)
+                            .opacity(0.08)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .id(mediaObserver.state.bundleIdentifier)
                     }
@@ -157,7 +157,7 @@ struct IslandView: View {
                     .truncationMode(.tail)
                 Spacer()
             }
-            .frame(height: 36) // Fill the added vertical space
+            .frame(height: 26) // Fill the added vertical space
             .padding(.horizontal, 20)
         }
         .frame(width: capsuleWidth, height: capsuleHeight)

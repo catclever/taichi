@@ -122,7 +122,7 @@ struct IslandView: View {
                         Image(nsImage: appIcon)
                             .resizable()
                             .frame(width: 20, height: 20)
-                            .opacity(0.45)
+                            .opacity(0.3)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .id(mediaObserver.state.bundleIdentifier)
                     }

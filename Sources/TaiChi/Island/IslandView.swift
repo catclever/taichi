@@ -14,7 +14,7 @@ struct IslandView: View {
         ZStack {
             // Base Background (The Notch)
             NotchShape(topCornerRadius: cornerRadii.top, bottomCornerRadius: cornerRadii.bottom)
-                .fill(Color.black)
+                .fill(stateModel.state == .expanded ? Color.black.opacity(stateModel.isPinned ? 0.8 : 0.9) : Color.black)
                 .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
             
             // Content
@@ -210,6 +210,11 @@ struct IslandView: View {
             Task { @MainActor in
                 guard self.stateModel.state == .expanded else {
                     self.edgeHoverTimer?.invalidate()
+                    return
+                }
+                
+                if self.stateModel.isPinned {
+                    // Do nothing if pinned, the panel stays open
                     return
                 }
                 

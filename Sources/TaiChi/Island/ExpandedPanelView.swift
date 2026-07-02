@@ -14,132 +14,151 @@ struct ExpandedPanelView: View {
     @State private var localElapsedTime: Double = 0.0
     
     var body: some View {
-        HStack(spacing: 20) {
-            // Left: CD Player
-            ZStack {
-                Circle()
-                    .fill(Color.black)
-                    .frame(width: 80, height: 80)
-                
-                if let data = mediaObserver.state.artworkData, let img = NSImage(data: data) {
-                    SpinningRecord(image: img, duration: 11.4, isPlaying: mediaObserver.state.isPlaying)
-                        .frame(width: 76, height: 76)
-                } else {
-                    SpinningRecord(image: NSImage(named: NSImage.applicationIconName) ?? NSImage(), duration: 11.4, isPlaying: mediaObserver.state.isPlaying)
-                        .frame(width: 76, height: 76)
-                }
-                
-                // Tonearm
-                TonearmView(isPlaying: mediaObserver.state.isPlaying)
-                    .frame(width: 40, height: 80)
-                    .offset(x: 20, y: -20)
-            }
-            .onTapGesture {
-                // Play/Pause
-                mediaObserver.sendCommand(2) // 2 is kMRATogglePlayPause
-            }
-            .padding(.leading, 20)
-            
-            // Middle/Right: Lyrics and Controls
-            VStack(alignment: .leading, spacing: 10) {
-                // Main Content Area (Click to toggle)
-                ZStack(alignment: .leading) {
-                    if showingControls {
-                        // Playback Controls
-                        HStack(spacing: 30) {
-                            Spacer()
-                            Button(action: { mediaObserver.sendCommand(5) }) { // Previous
-                                Image(systemName: "backward.fill")
-                                    .font(.title2)
-                                    .foregroundColor(.white)
-                            }.buttonStyle(PlainButtonStyle())
-                            
-                            Button(action: { mediaObserver.sendCommand(2) }) { // Play/Pause
-                                Image(systemName: mediaObserver.state.isPlaying ? "pause.fill" : "play.fill")
-                                    .font(.title)
-                                    .foregroundColor(.white)
-                            }.buttonStyle(PlainButtonStyle())
-                            
-                            Button(action: { mediaObserver.sendCommand(4) }) { // Next
-                                Image(systemName: "forward.fill")
-                                    .font(.title2)
-                                    .foregroundColor(.white)
-                            }.buttonStyle(PlainButtonStyle())
-                            Spacer()
-                        }
+        ZStack(alignment: .topTrailing) {
+            HStack(spacing: 20) {
+                // Left: CD Player
+                ZStack {
+                    Circle()
+                        .fill(Color.black)
+                        .frame(width: 80, height: 80)
+                    
+                    if let data = mediaObserver.state.artworkData, let img = NSImage(data: data) {
+                        SpinningRecord(image: img, duration: 11.4, isPlaying: mediaObserver.state.isPlaying)
+                            .frame(width: 76, height: 76)
                     } else {
-                        // Lyrics View
-                        if lyricManager.currentLyrics.isEmpty {
-                            // Default to Title + Artist
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(mediaObserver.state.title)
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
-                                Text(mediaObserver.state.artist)
-                                    .font(.system(size: 14, weight: .regular))
-                                    .foregroundColor(.gray)
-                                    .lineLimit(1)
+                        SpinningRecord(image: NSImage(named: NSImage.applicationIconName) ?? NSImage(), duration: 11.4, isPlaying: mediaObserver.state.isPlaying)
+                            .frame(width: 76, height: 76)
+                    }
+                    
+                    // Tonearm
+                    TonearmView(isPlaying: mediaObserver.state.isPlaying)
+                        .frame(width: 40, height: 80)
+                        .offset(x: 20, y: -20)
+                }
+                .onTapGesture {
+                    // Play/Pause
+                    mediaObserver.sendCommand(2) // 2 is kMRATogglePlayPause
+                }
+                .padding(.leading, 20)
+                
+                // Middle/Right: Lyrics and Controls
+                VStack(alignment: .leading, spacing: 10) {
+                    // Main Content Area (Click to toggle)
+                    ZStack(alignment: .leading) {
+                        if showingControls {
+                            // Playback Controls
+                            HStack(spacing: 30) {
+                                Spacer()
+                                Button(action: { mediaObserver.sendCommand(5) }) { // Previous
+                                    Image(systemName: "backward.fill")
+                                        .font(.title2)
+                                        .foregroundColor(.white)
+                                }.buttonStyle(PlainButtonStyle())
+                                
+                                Button(action: { mediaObserver.sendCommand(2) }) { // Play/Pause
+                                    Image(systemName: mediaObserver.state.isPlaying ? "pause.fill" : "play.fill")
+                                        .font(.title)
+                                        .foregroundColor(.white)
+                                }.buttonStyle(PlainButtonStyle())
+                                
+                                Button(action: { mediaObserver.sendCommand(4) }) { // Next
+                                    Image(systemName: "forward.fill")
+                                        .font(.title2)
+                                        .foregroundColor(.white)
+                                }.buttonStyle(PlainButtonStyle())
+                                Spacer()
                             }
                         } else {
-                            // Synchronized Lyrics
-                            LyricsDisplayView(lyrics: lyricManager.currentLyrics, currentTime: localElapsedTime)
+                            // Lyrics View
+                            if lyricManager.currentLyrics.isEmpty {
+                                // Default to Title + Artist
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(mediaObserver.state.title)
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+                                    Text(mediaObserver.state.artist)
+                                        .font(.system(size: 14, weight: .regular))
+                                        .foregroundColor(.gray)
+                                        .lineLimit(1)
+                                }
+                            } else {
+                                // Synchronized Lyrics
+                                LyricsDisplayView(lyrics: lyricManager.currentLyrics, currentTime: localElapsedTime)
+                            }
                         }
                     }
-                }
-                .frame(maxWidth: .infinity, maxHeight: 60, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showingControls.toggle()
-                    }
-                }
-                
-                // Progress Bar
-                HStack {
-                    Text(formatTime(localElapsedTime))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.gray)
-                    
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.white.opacity(0.2))
-                                .frame(height: 4)
-                            
-                            let progress = mediaObserver.state.duration > 0 ? (isDraggingProgress ? dragProgress : localElapsedTime) / mediaObserver.state.duration : 0
-                            
-                            Capsule().fill(Color.white)
-                                .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(progress))), height: 4)
+                    .frame(maxWidth: .infinity, maxHeight: 60, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showingControls.toggle()
                         }
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 0)
-                                .onChanged { value in
-                                    isDraggingProgress = true
-                                    let percent = min(max(0, value.location.x / geo.size.width), 1.0)
-                                    dragProgress = percent * mediaObserver.state.duration
-                                }
-                                .onEnded { value in
-                                    let percent = min(max(0, value.location.x / geo.size.width), 1.0)
-                                    let targetTime = percent * mediaObserver.state.duration
-                                    mediaObserver.seek(to: targetTime)
-                                    localElapsedTime = targetTime
-                                    isDraggingProgress = false
-                                }
-                        )
                     }
-                    .frame(height: 10)
                     
-                    Text(formatTime(mediaObserver.state.duration))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.gray)
+                    // Progress Bar
+                    HStack {
+                        Text(formatTime(localElapsedTime))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.gray)
+                        
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.white.opacity(0.2))
+                                    .frame(height: 4)
+                                
+                                let progress = mediaObserver.state.duration > 0 ? (isDraggingProgress ? dragProgress : localElapsedTime) / mediaObserver.state.duration : 0
+                                
+                                Capsule().fill(Color.white)
+                                    .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(progress))), height: 4)
+                            }
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        isDraggingProgress = true
+                                        let percent = min(max(0, value.location.x / geo.size.width), 1.0)
+                                        dragProgress = percent * mediaObserver.state.duration
+                                    }
+                                    .onEnded { value in
+                                        let percent = min(max(0, value.location.x / geo.size.width), 1.0)
+                                        let targetTime = percent * mediaObserver.state.duration
+                                        mediaObserver.seek(to: targetTime)
+                                        localElapsedTime = targetTime
+                                        isDraggingProgress = false
+                                    }
+                            )
+                        }
+                        .frame(height: 10)
+                        
+                        Text(formatTime(mediaObserver.state.duration))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.gray)
+                    }
                 }
+                .padding(.trailing, 20)
             }
-            .padding(.trailing, 20)
+            .padding(.top, 38)
+            .padding(.bottom, 20)
+            
+            // Pin Button
+            Button(action: {
+                withAnimation {
+                    stateModel.isPinned.toggle()
+                }
+            }) {
+                Image(systemName: stateModel.isPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 10))
+                    .foregroundColor(stateModel.isPinned ? .white : .gray.opacity(0.5))
+                    .rotationEffect(.degrees(30))
+                    .padding(8)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .padding(.trailing, 16)
+            .padding(.top, 16)
         }
-        .padding(.top, 38)
         .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
-
         .onReceive(timer) { _ in
             guard !isDraggingProgress else { return }
             

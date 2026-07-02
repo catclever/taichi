@@ -16,4 +16,5 @@ class IslandStateModel: ObservableObject {
     @Published var capsuleWidth: CGFloat = 160
     @Published var capsuleHeight: CGFloat = 36
     @Published var isHovering: Bool = false
+    @Published var isPinned: Bool = false
 }

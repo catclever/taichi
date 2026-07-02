@@ -62,16 +62,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
         
         positionWindow()
         
-        IslandStateModel.shared.$isPinned
-            .sink { [weak self] pinned in
-                if pinned {
-                    self?.window?.level = .normal
-                } else {
-                    self?.window?.level = NSWindow.Level(rawValue: Int(NSWindow.Level.mainMenu.rawValue) + 3)
-                }
-            }
-            .store(in: &cancellables)
-        
+
         // Listen to screen changes to reposition
         NotificationCenter.default.addObserver(self, selector: #selector(positionWindow), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         
@@ -108,5 +99,16 @@ public class IslandManager: NSObject, NSWindowDelegate {
         let y = screen.frame.maxY - height
         
         window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+    }
+    
+    public func setPanelFocusedState(_ focused: Bool) {
+        guard let window = window else { return }
+        if focused {
+            window.alphaValue = 1.0
+            window.ignoresMouseEvents = false
+        } else {
+            window.alphaValue = 0.5
+            window.ignoresMouseEvents = true
+        }
     }
 }

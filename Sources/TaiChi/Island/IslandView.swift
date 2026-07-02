@@ -63,11 +63,19 @@ struct IslandView: View {
             updateStateDimensions()
             updateArtwork(data: mediaObserver.state.artworkData)
         }
-        .onChange(of: stateModel.state) { _ in
+        .onChange(of: stateModel.state) { newState in
             updateStateDimensions()
+            if newState != .expanded {
+                IslandManager.shared.setPanelFocusedState(true)
+            }
         }
         .onChange(of: mediaObserver.state.isPlaying) { _ in
             updateStateDimensions()
+        }
+        .onChange(of: stateModel.isPinned) { pinned in
+            if !pinned {
+                IslandManager.shared.setPanelFocusedState(true)
+            }
         }
     }
     
@@ -234,13 +242,16 @@ struct IslandView: View {
                     return
                 }
                 
+                let mouseLocation = NSEvent.mouseLocation
+                let isInside = self.isMouseInExpandedArea(mouseLocation)
+                
                 if self.stateModel.isPinned {
-                    // Do nothing if pinned, the panel stays open
+                    // When pinned, stay open but change opacity and hit testing
+                    IslandManager.shared.setPanelFocusedState(isInside)
                     return
                 }
                 
-                let mouseLocation = NSEvent.mouseLocation
-                if !self.isMouseInExpandedArea(mouseLocation) {
+                if !isInside {
                     self.edgeHoverTimer?.invalidate()
                     self.hoverTimer?.invalidate()
                     self.hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in

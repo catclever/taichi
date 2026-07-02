@@ -5,7 +5,18 @@ import SwiftUI
 @MainActor
 class PassThroughHostingView<Content: SwiftUI.View>: NSHostingView<Content> {
     override func hitTest(_ point: NSPoint) -> NSView? {
-        return nil // Never intercept clicks
+        let stateModel = IslandStateModel.shared
+        let notchWidth = stateModel.capsuleWidth
+        let notchHeight = stateModel.capsuleHeight
+        
+        // Coordinate system: bottom-left origin. Window is 800x200.
+        // The notch is top-center.
+        let notchRect = NSRect(x: (800 - notchWidth) / 2, y: 200 - notchHeight, width: notchWidth, height: notchHeight)
+        
+        if notchRect.contains(point) {
+            return super.hitTest(point) ?? self
+        }
+        return nil
     }
 }
 
@@ -37,8 +48,8 @@ public class IslandManager: NSObject, NSWindowDelegate {
         panel.isOpaque = false
         panel.delegate = self
         
-        // Disable mouse interaction completely so it doesn't block settings/other windows below it.
-        panel.ignoresMouseEvents = true
+        // Remove ignoresMouseEvents so we can hover and click the notch area,
+        // but PassThroughHostingView will pass through clicks outside the notch.
         
         let islandView = IslandView()
         let hostingView = PassThroughHostingView(rootView: islandView)

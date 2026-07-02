@@ -10,7 +10,17 @@ struct MediaState: Equatable {
     var bundleIdentifier: String = ""
     var duration: Double = 0
     var elapsedTime: Double = 0
+    var lastElapsedTimeUpdate: Date = Date()
     var debugInfo: String = ""
+    
+    var currentElapsedTime: Double {
+        guard duration > 0 else { return 0 }
+        if isPlaying {
+            return min(duration, elapsedTime + Date().timeIntervalSince(lastElapsedTimeUpdate))
+        } else {
+            return elapsedTime
+        }
+    }
 }
 
 class MediaObserver: ObservableObject, @unchecked Sendable {
@@ -30,7 +40,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
     }
     
     private func startStreaming() {
-        guard let resourcePath = Bundle.main.resourcePath else { return }
+        guard let resourcePath = Bundle.module.resourcePath else { return }
         let adapterPath = resourcePath + "/MediaRemoteAdapter/mediaremote-adapter.pl"
         let frameworkPath = resourcePath + "/MediaRemoteAdapter/MediaRemoteAdapter.framework"
         
@@ -103,8 +113,14 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                 if let title = payload.title { newState.title = title }
                 if let artist = payload.artist { newState.artist = artist }
                 if let duration = payload.duration { newState.duration = duration }
-                if let elapsedTime = payload.elapsedTime { newState.elapsedTime = elapsedTime }
-                if let playing = payload.playing { newState.isPlaying = playing }
+                if let elapsedTime = payload.elapsedTime {
+                    newState.elapsedTime = elapsedTime
+                    newState.lastElapsedTimeUpdate = Date()
+                }
+                if let playing = payload.playing {
+                    newState.isPlaying = playing
+                    newState.lastElapsedTimeUpdate = Date() // Reset on play/pause too to keep it accurate
+                }
                 if let bundle = payload.bundleIdentifier { newState.bundleIdentifier = bundle }
                 
                 if let base64 = payload.artworkData {
@@ -125,6 +141,38 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
             }
         } catch {
             print("Error parsing json: \(error)")
+        }
+    }
+    
+    func sendCommand(_ commandId: Int) {
+        guard let resourcePath = Bundle.module.resourcePath else { return }
+        let adapterPath = resourcePath + "/MediaRemoteAdapter/mediaremote-adapter.pl"
+        let frameworkPath = resourcePath + "/MediaRemoteAdapter/MediaRemoteAdapter.framework"
+        
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        process.arguments = [adapterPath, frameworkPath, "send", "\(commandId)"]
+        
+        do {
+            try process.run()
+        } catch {
+            print("Failed to run sendCommand: \(error)")
+        }
+    }
+    
+    func seek(to time: Double) {
+        guard let resourcePath = Bundle.module.resourcePath else { return }
+        let adapterPath = resourcePath + "/MediaRemoteAdapter/mediaremote-adapter.pl"
+        let frameworkPath = resourcePath + "/MediaRemoteAdapter/MediaRemoteAdapter.framework"
+        
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        process.arguments = [adapterPath, frameworkPath, "seek", "\(time)"]
+        
+        do {
+            try process.run()
+        } catch {
+            print("Failed to run seek: \(error)")
         }
     }
 }

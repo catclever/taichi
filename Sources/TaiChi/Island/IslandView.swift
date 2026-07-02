@@ -1,66 +1,98 @@
 import SwiftUI
 import Cocoa
 
-enum IslandState {
-    case idle // When nothing is playing or playing normally
-    case trackChanged // Temporarily expanded for 5s
-    case expanded // Clicked (lyrics later)
-}
-
 struct IslandView: View {
     @ObservedObject var mediaObserver = MediaObserver.shared
+    @ObservedObject var stateModel = IslandStateModel.shared
     
-    @State private var state: IslandState = .idle
     @State private var trackChangeTimer: Timer?
+    @State private var hoverTimer: Timer?
     @State private var currentArtwork: NSImage?
-    @State private var waveformColor: Color = .orange // Default fallback
-    
-    // Smooth transitions
-    @Namespace private var islandNamespace
+    @State private var waveformColor: Color = .orange
     
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                // Main Island Background
-                NotchShape(topCornerRadius: cornerRadii.top, bottomCornerRadius: cornerRadii.bottom)
-                    .fill(Color.black)
-                    .frame(width: capsuleWidth, height: capsuleHeight)
-                    .shadow(color: Color.black.opacity(0.3), radius: 10, x: 0, y: 5)
-                
-                // Content based on state
-                if state == .idle {
+        ZStack {
+            // Base Background (The Notch)
+            NotchShape(topCornerRadius: cornerRadii.top, bottomCornerRadius: cornerRadii.bottom)
+                .fill(Color.black)
+                .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
+            
+            // Content
+            Group {
+                switch stateModel.state {
+                case .idle:
                     idleContent
-                        .matchedGeometryEffect(id: "content", in: islandNamespace)
-                } else if state == .trackChanged {
+                case .trackChanged:
                     trackChangedContent
-                        .matchedGeometryEffect(id: "content", in: islandNamespace)
-                } else {
-                    // Expanded (Lyrics, not implemented yet)
-                    Text("Lyrics Space")
-                        .foregroundColor(.white)
-                        .matchedGeometryEffect(id: "content", in: islandNamespace)
+                case .expanded:
+                    ExpandedPanelView()
                 }
             }
-            .animation(.interpolatingSpring(stiffness: 300, damping: 20), value: state)
-            
-            Spacer() // Push everything to the top
+            .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
+            .clipShape(NotchShape(topCornerRadius: cornerRadii.top, bottomCornerRadius: cornerRadii.bottom))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .contentShape(Rectangle())
+        .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleWidth)
+        .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleHeight)
+        .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.state)
+        .onHover { isHovering in
+            handleHover(isHovering)
+        }
+        .onTapGesture {
+            if !mediaObserver.state.isPlaying && stateModel.state != .expanded {
+                withAnimation {
+                    stateModel.state = .expanded
+                    startExpandedHoverPolling()
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top) // Fill the hosting view to position notch
         .onChange(of: mediaObserver.state.title) { _ in
             handleTrackChange()
         }
-        .onChange(of: mediaObserver.state.artworkData) { newData in
-            updateArtwork(data: newData)
+        .onChange(of: mediaObserver.state.artworkData) { data in
+            updateArtwork(data: data)
         }
         .onAppear {
+            updateStateDimensions()
             updateArtwork(data: mediaObserver.state.artworkData)
-            if !mediaObserver.state.title.isEmpty {
-                handleTrackChange()
+        }
+        .onChange(of: stateModel.state) { _ in
+            updateStateDimensions()
+        }
+        .onChange(of: mediaObserver.state.isPlaying) { _ in
+            updateStateDimensions()
+        }
+    }
+    
+    private func updateStateDimensions() {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0)) {
+            if !mediaObserver.state.isPlaying && stateModel.state != .expanded {
+                stateModel.capsuleWidth = baseNotchWidth
+                stateModel.capsuleHeight = baseNotchHeight
+                return
+            }
+            
+            if mediaObserver.state.title.isEmpty {
+                stateModel.capsuleWidth = baseNotchWidth
+                stateModel.capsuleHeight = baseNotchHeight
+                return
+            }
+            
+            switch stateModel.state {
+            case .idle:
+                stateModel.capsuleWidth = baseNotchWidth + 80
+                stateModel.capsuleHeight = baseNotchHeight
+            case .trackChanged:
+                stateModel.capsuleWidth = baseNotchWidth + 80
+                stateModel.capsuleHeight = baseNotchHeight + 26
+            case .expanded:
+                stateModel.capsuleWidth = 380
+                stateModel.capsuleHeight = 160
             }
         }
     }
     
-    // MARK: - Dimensions
     private var baseNotchWidth: CGFloat {
         if let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main {
             if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
@@ -69,15 +101,6 @@ struct IslandView: View {
             }
         }
         return 190
-    }
-
-    private var capsuleWidth: CGFloat {
-        if !mediaObserver.state.isPlaying { return baseNotchWidth }
-        switch state {
-        case .idle: return baseNotchWidth + 80
-        case .trackChanged: return baseNotchWidth + 80 // Same as playing idle width
-        case .expanded: return 300
-        }
     }
     
     private var baseNotchHeight: CGFloat {
@@ -92,23 +115,14 @@ struct IslandView: View {
         let baseRadius = baseNotchHeight / 3
         return (top: baseRadius - 4, bottom: baseRadius)
     }
-
-    private var capsuleHeight: CGFloat {
-        if !mediaObserver.state.isPlaying { return baseNotchHeight }
-        switch state {
-        case .idle: return baseNotchHeight
-        case .trackChanged: return baseNotchHeight + 26 // Expand vertically just enough for text
-        case .expanded: return 120
-        }
-    }
     
     // MARK: - Views
     private var idleContent: some View {
         HStack {
-            if mediaObserver.state.isPlaying {
+            if !mediaObserver.state.title.isEmpty {
                 // Left: Spinning Record
                 if let img = currentArtwork {
-                    SpinningRecord(image: img)
+                    SpinningRecord(image: img, isPlaying: mediaObserver.state.isPlaying)
                         .frame(width: 20, height: 20) // Smaller to avoid being cramped
                         .padding(.leading, 12)
                 }
@@ -127,17 +141,19 @@ struct IslandView: View {
                             .id(mediaObserver.state.bundleIdentifier)
                     }
                     
-                    // Waveform
-                    WaveformView(color: waveformColor)
-                        .frame(width: 30, height: 16)
+                    // Waveform (hidden or static when paused)
+                    if mediaObserver.state.isPlaying {
+                        WaveformView(color: waveformColor)
+                            .frame(width: 30, height: 16)
+                    }
                 }
                 .padding(.trailing, 12)
             } else {
-                // Not playing: just empty spacer to keep the notch shape
+                // Not playing and no track: just empty spacer to keep the notch shape
                 Spacer()
             }
         }
-        .frame(width: capsuleWidth, height: baseNotchHeight, alignment: .top)
+        .frame(width: stateModel.capsuleWidth, height: baseNotchHeight, alignment: .top)
     }
             
 
@@ -160,23 +176,97 @@ struct IslandView: View {
             .frame(height: 26) // Fill the added vertical space
             .padding(.horizontal, 20)
         }
-        .frame(width: capsuleWidth, height: capsuleHeight)
+        .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
     }
     
     // MARK: - Logic
+    @State private var edgeHoverTimer: Timer?
+    
+    private func handleHover(_ isHovering: Bool) {
+        hoverTimer?.invalidate()
+        if isHovering {
+            guard !mediaObserver.state.title.isEmpty else { return } // Only expand if there's a song
+            guard mediaObserver.state.isPlaying else { return } // Do not expand on hover when paused
+            
+            hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+                Task { @MainActor in
+                    self.stateModel.state = .expanded
+                    self.startExpandedHoverPolling()
+                }
+            }
+        } else {
+            // Only collapse if we were expanded
+            if stateModel.state == .expanded {
+                // Do not collapse here! Let the poller handle it!
+            } else if stateModel.state == .trackChanged {
+                // Optional: handle trackChanged hover exit if needed
+            }
+        }
+    }
+    
+    private func startExpandedHoverPolling() {
+        edgeHoverTimer?.invalidate()
+        edgeHoverTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+            Task { @MainActor in
+                guard self.stateModel.state == .expanded else {
+                    self.edgeHoverTimer?.invalidate()
+                    return
+                }
+                
+                let mouseLocation = NSEvent.mouseLocation
+                if !self.isMouseInExpandedArea(mouseLocation) {
+                    self.edgeHoverTimer?.invalidate()
+                    self.hoverTimer?.invalidate()
+                    self.hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in
+                        Task { @MainActor in
+                            self.stateModel.state = .idle
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func isMouseInExpandedArea(_ location: NSPoint) -> Bool {
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(location) }) ?? NSScreen.main else {
+            return false
+        }
+        
+        let width: CGFloat = 380
+        let height: CGFloat = 160
+        
+        let screenFrame = screen.frame
+        let centerX = screenFrame.midX
+        let topY = screenFrame.maxY
+        
+        // Add a 20px horizontal buffer and 10px vertical buffer to avoid accidental closing.
+        // Also remove the strict maxY check so overshooting the top edge doesn't instantly close it.
+        let minX = centerX - (width / 2) - 20
+        let maxX = centerX + (width / 2) + 20
+        let minY = topY - height - 10
+        
+        return location.x >= minX && location.x <= maxX && location.y >= minY
+    }
+    
     private func handleTrackChange() {
         guard !mediaObserver.state.title.isEmpty else { return }
         guard mediaObserver.state.isPlaying else { return }
         
+        // Don't interrupt expanded view
+        if stateModel.state == .expanded { return }
+        
         withAnimation {
-            state = .trackChanged
+            stateModel.state = .trackChanged
         }
         
         trackChangeTimer?.invalidate()
         trackChangeTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { _ in
             Task { @MainActor in
                 withAnimation {
-                    self.state = .idle
+                    // Only go back to idle if we haven't been manually expanded
+                    if self.stateModel.state == .trackChanged {
+                        self.stateModel.state = .idle
+                    }
                 }
             }
         }
@@ -211,7 +301,11 @@ struct IslandView: View {
 
 struct SpinningRecord: View {
     let image: NSImage
+    var duration: Double = 3.0
+    var isPlaying: Bool = true
+    
     @State private var rotation: Double = 0
+    @State private var timer: Timer? = nil
     
     var body: some View {
         Image(nsImage: image)
@@ -220,11 +314,36 @@ struct SpinningRecord: View {
             .clipShape(Circle())
             .overlay(Circle().stroke(Color.black.opacity(0.2), lineWidth: 1)) // record groove
             .rotationEffect(.degrees(rotation))
-            .onAppear {
-                withAnimation(.linear(duration: 3).repeatForever(autoreverses: false)) {
-                    rotation = 360
-                }
+            .onChange(of: isPlaying) { playing in
+                updateTimer(playing)
             }
+            .onAppear {
+                updateTimer(isPlaying)
+            }
+            .onDisappear {
+                timer?.invalidate()
+                timer = nil
+            }
+    }
+    
+    private func updateTimer(_ playing: Bool) {
+        if playing {
+            if timer == nil {
+                let fps = 60.0
+                let interval = 1.0 / fps
+                let degreesPerTick = 360.0 / duration / fps
+                timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
+                    Task { @MainActor in
+                        rotation += degreesPerTick
+                        if rotation >= 360 { rotation -= 360 }
+                    }
+                }
+                RunLoop.main.add(timer!, forMode: .common)
+            }
+        } else {
+            timer?.invalidate()
+            timer = nil
+        }
     }
 }
 

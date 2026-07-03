@@ -31,6 +31,28 @@ open -a TaiChi
 
 ---
 
+## 🏝️ 灵动岛 (Dynamic Island)
+
+- **状态显示**：播放音乐时，刘海下方会自动显示专辑封面和波形。
+- **悬浮与固定**：鼠标悬停可展开详细面板。点击可将面板固定在屏幕顶端，此时面板变为半透明，且支持鼠标点击穿透，不影响背景应用的正常操作。
+- **自适应缩放**：界面元素会根据屏幕分辨率和物理刘海大小自动进行等比缩放。
+
+---
+
+## 💉 Cyber 注入 (CDP Evaluate API)
+
+- **调试模式**：可通过 Alfred 工作流自动拉起开启了远程调试端口（Remote Debugging Port）的 Electron/Chromium 应用。
+- **动态执行**：提供本地 `/api/cyber/evaluate` 接口。你可以通过 POST 请求，利用 WebSocket (CDP) 向目标应用的页面上下文中注入并执行自定义 JavaScript 代码。
+
+---
+
+## 🛠 Hammerspoon 集成
+
+- **自动部署**：启动时会自动在 `~/.hammerspoon` 目录下注入通信脚本，并生成 `taichi_env.lua` 配置文件。
+- **双向通信**：TaiChi 与 Hammerspoon 之间建立了安全的通信 API，支持通过 Lua 脚本相互调用功能。
+
+---
+
 ## 🎩 Alfred 神级联动 (Alfred Workflow)
 
 我们为 Alfred 深度定制了 API 后端，你可以用最优雅的姿势掌控一切应用。

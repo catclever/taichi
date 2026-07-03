@@ -26,11 +26,11 @@ function M.reconnect()
     hs.printf("TaiChi Client: Circuit breaker reset manually.")
 end
 
-function M.postEvent(event_type, data)
+function M.postEvent(event_type, data, force)
     if not M.taichi_port then return end
     
-    -- 如果熔断器已打开，直接放弃发送，避免控制台刷屏
-    if M.is_circuit_open then return end
+    -- 如果熔断器已打开，直接放弃发送，避免控制台刷屏 (除非是强制发送)
+    if M.is_circuit_open and not force then return end
     
     local url = "http://localhost:" .. M.taichi_port .. "/api/event"
     local payload = hs.json.encode({
@@ -55,15 +55,20 @@ function M.postEvent(event_type, data)
             hs.printf("TaiChi Client Error: Failed to post %s, status: %s (Fail count: %d/%d)", 
                       event_type, tostring(status), M.fail_count, M.max_fails)
             
-            if M.fail_count >= M.max_fails then
+            if M.fail_count >= M.max_fails and not M.is_circuit_open then
                 M.is_circuit_open = true
-                hs.alert.show("TaiChi 服务似乎已离线！\n连接已熔断，不再发送事件。", 5)
-                hs.printf("TaiChi Client: Circuit breaker OPENED. Stopped sending events.")
+                hs.alert.show("TaiChi 服务似乎已离线！\n连接已熔断，不再自动发送后台事件。", 5)
+                hs.printf("TaiChi Client: Circuit breaker OPENED. Stopped sending background events.")
             end
         else
-            -- 只要成功一次，立刻清零失败计数
-            if M.fail_count > 0 then
+            -- 只要成功一次，立刻清零失败计数并重置熔断器
+            if M.fail_count > 0 or M.is_circuit_open then
                 M.fail_count = 0
+                if M.is_circuit_open then
+                    M.is_circuit_open = false
+                    hs.alert.show("TaiChi 客户端已重新连接！", 3)
+                    hs.printf("TaiChi Client: Circuit breaker RESET. Resumed sending events.")
+                end
             end
         end
     end)
@@ -88,7 +93,7 @@ http_bus.registerAction("hideAppIfOnScreen", function(p) floating_action.hideApp
 http_bus.registerAction("alert", function(p) hs.alert.show(p.text or p.message or "...", tonumber(p.duration) or 3) end)
 http_bus.registerAction("getScreens", function(p)
     local screens = {}
-    for _, s in ipairs(utils.getScreens({ includeVirtual = true })) do
+    for _, s in ipairs(hs.screen.allScreens()) do
         local uuid = s:getUUID()
         if type(uuid) ~= "string" or uuid == "" then
             uuid = tostring(s:id())
@@ -127,13 +132,13 @@ function M.bindHotkeys(keys)
     M.hotkey_refs.pin = hs.hotkey.bind(pinMods, pinKey, function()
         local app = hs.application.frontmostApplication()
         if app then
-            M.postEvent("togglePin", { appName = app:name() })
+            M.postEvent("togglePin", { appName = app:name() }, true)
         end
     end)
 
     -- 全局显隐所有浮动应用
     M.hotkey_refs.all = hs.hotkey.bind(allMods, allKey, function()
-        M.postEvent("toggleAllFloatingApps", {})
+        M.postEvent("toggleAllFloatingApps", {}, true)
     end)
 end
 

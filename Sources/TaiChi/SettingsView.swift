@@ -391,6 +391,17 @@ struct SystemSettingsTab: View {
                 .padding()
             }
             
+            GroupBox(label: Text("实验性功能 / 音频引擎优化")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("开启音频防休眠 (Anti-Sleep Audio)", isOn: $settings.isAudioKeepAliveEnabled)
+                    Text("智能防断联：仅在连接蓝牙耳机时，于后台静音运行占位音频。解决网易云等软件暂停时，导致会议软件(Zoom/腾讯会议)无声的 macOS 底层 Bug。")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding()
+            }
+            
             GroupBox(label: Text("系统权限状态")) {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {

@@ -187,6 +187,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         ServerManager.shared.start()
         Task { await WallpaperManager.shared.startEngine() }
         IslandManager.shared.setup()
+        AudioKeepAliveManager.shared.setEnabled(TaiChiSettings.shared.isAudioKeepAliveEnabled)
         
         let contentView = TaiChiOverlayView(config: config)
 

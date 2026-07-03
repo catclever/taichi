@@ -140,6 +140,14 @@ class TaiChiSettings: ObservableObject {
         }
     }
     
+    // MARK: - Audio Keep-Alive Feature
+    @Published var isAudioKeepAliveEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(isAudioKeepAliveEnabled, forKey: "isAudioKeepAliveEnabled")
+            AudioKeepAliveManager.shared.setEnabled(isAudioKeepAliveEnabled)
+        }
+    }
+    
     @Published var hotkeyTogglePin: HotkeyConfig = HotkeyConfig(modifiers: ["ctrl"], key: "H") {
         didSet { 
             saveHotkeys()
@@ -271,6 +279,7 @@ class TaiChiSettings: ObservableObject {
         
         isFloatingFeatureEnabled = UserDefaults.standard.bool(forKey: "isFloatingFeatureEnabled")
         isTelescopeEnabled = UserDefaults.standard.bool(forKey: "isTelescopeEnabled")
+        isAudioKeepAliveEnabled = UserDefaults.standard.bool(forKey: "isAudioKeepAliveEnabled")
         
         if let data = UserDefaults.standard.data(forKey: "hotkeyTogglePin"), let hk = try? JSONDecoder().decode(HotkeyConfig.self, from: data) { hotkeyTogglePin = hk }
         if let data = UserDefaults.standard.data(forKey: "hotkeyToggleAll"), let hk = try? JSONDecoder().decode(HotkeyConfig.self, from: data) { hotkeyToggleAll = hk }

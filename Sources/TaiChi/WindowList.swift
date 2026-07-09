@@ -192,6 +192,31 @@ class WindowManager {
         return windows
     }
     
+    // =========================================================================================
+    // [BUG FIX: AXUIElement Unresponsiveness / Main Thread Freeze]
+    // Problem:
+    // When activating a specific window of an app (like VS Code), the method iterates over all 
+    // `AXUIElement` windows for that process to find the one matching the target bounds.
+    // However, some apps (like Electron apps) have notoriously broken or huge accessibility trees.
+    // Attempting to query `kAXWindowsAttribute` or individual window attributes without a timeout 
+    // would block the main thread for 6+ seconds per call, causing the entire UI to freeze 
+    // when tapping on an app's icon.
+    //
+    // Method/Logic:
+    // Added `AXUIElementSetMessagingTimeout(axApp, 0.5)` immediately after creating the
+    // `AXUIElement` for the application. This ensures that any subsequent AX calls that hang
+    // will bail out after 500ms, falling back gracefully rather than locking up the launcher.
+    //
+    // Caveats for future development:
+    // - Always pair `AXUIElementCreateApplication` with `AXUIElementSetMessagingTimeout` 
+    //   when running on the main thread, especially when targeting third-party apps.
+    //
+    // [Bug Fix Document]
+    // 问题：点击太极中的某些应用（如 VS Code）的特定窗口图标时，整个太极界面会完全卡死数秒。
+    // 原因：在通过 `activateWindow` 尝试前置指定窗口时，代码调用了无障碍 API (`AXUIElement`) 来遍历应用窗口。由于 VS Code 等 Electron 应用的无障碍树非常庞大且容易阻塞，默认的 AX 通信超时时间过长，直接阻塞了太极的主线程。
+    // 修复逻辑：在创建了进程的 `axApp` 节点后，强制设置 `AXUIElementSetMessagingTimeout(axApp, 0.5)`，将无障碍 API 的通信超时限制为 500 毫秒，防止由于目标应用无响应而拖死整个启动器。
+    // 注意事项：后续凡是在主线程涉及跨进程的 `AXUIElement` 查询操作，必须显式设定较短的超时时间。
+    // =========================================================================================
     func activateWindow(pid: pid_t, title: String, bounds: CGRect) {
         guard let app = NSRunningApplication(processIdentifier: pid) else { return }
         let appBundleID = app.bundleIdentifier ?? ""

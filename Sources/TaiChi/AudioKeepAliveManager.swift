@@ -2,12 +2,24 @@ import Foundation
 import AVFoundation
 import CoreAudio
 
+private func getSilenceRenderBlock() -> AVAudioSourceNodeRenderBlock {
+    return { _, _, frameCount, audioBufferList -> OSStatus in
+        let ablPointer = UnsafeMutableAudioBufferListPointer(audioBufferList)
+        for buffer in ablPointer {
+            if let data = buffer.mData {
+                memset(data, 0, Int(buffer.mDataByteSize))
+            }
+        }
+        return noErr
+    }
+}
+
 @MainActor
 class AudioKeepAliveManager: ObservableObject {
     static let shared = AudioKeepAliveManager()
     
     private var engine = AVAudioEngine()
-    private var playerNode = AVAudioPlayerNode()
+    private var sourceNode: AVAudioSourceNode!
     
     @Published var isPlaying = false
     @Published var isBluetoothConnected = false
@@ -15,7 +27,8 @@ class AudioKeepAliveManager: ObservableObject {
     private var isEnabled = false
     
     private init() {
-        engine.attach(playerNode)
+        sourceNode = AVAudioSourceNode(renderBlock: getSilenceRenderBlock())
+        engine.attach(sourceNode)
         setupDeviceListener()
         checkCurrentDevice()
     }
@@ -37,20 +50,12 @@ class AudioKeepAliveManager: ObservableObject {
         guard !isPlaying else { return }
         
         let format = engine.outputNode.outputFormat(forBus: 0)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+        engine.connect(sourceNode, to: engine.mainMixerNode, format: format)
         
         do {
             try engine.start()
-            
-            let frameCount = AVAudioFrameCount(format.sampleRate) // 1 second
-            if let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) {
-                buffer.frameLength = frameCount
-                // Zeroed buffer -> silence
-                playerNode.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
-                playerNode.play()
-                isPlaying = true
-                print("🎧 [AudioKeepAlive] Started silent playback (Bluetooth active).")
-            }
+            isPlaying = true
+            print("🎧 [AudioKeepAlive] Started continuous silent playback (Bluetooth active).")
         } catch {
             print("❌ [AudioKeepAlive] Failed to start engine: \(error)")
         }
@@ -58,9 +63,8 @@ class AudioKeepAliveManager: ObservableObject {
     
     private func stopEngine() {
         guard isPlaying else { return }
-        playerNode.stop()
         engine.stop()
-        engine.disconnectNodeOutput(playerNode)
+        engine.disconnectNodeOutput(sourceNode)
         isPlaying = false
         print("🎧 [AudioKeepAlive] Stopped silent playback.")
     }

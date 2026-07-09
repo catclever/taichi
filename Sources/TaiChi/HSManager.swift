@@ -31,28 +31,20 @@ public class HSManager: @unchecked Sendable {
         let runningApps = workspace.runningApplications
         let isRunning = runningApps.contains { $0.bundleIdentifier == hsBundleID }
         
-        if configWritten {
-            if isRunning {
-                print("🔄 [HSManager] Config changed. Hammerspoon is running, executing reload script via AppleScript...")
-                let scriptSource = "tell application \"Hammerspoon\" to execute lua code \"hs.reload()\""
-                var errorDict: NSDictionary?
-                if let appleScript = NSAppleScript(source: scriptSource) {
-                    appleScript.executeAndReturnError(&errorDict)
-                    if let error = errorDict {
-                        print("❌ [HSManager] AppleScript reload failed: \(error)")
-                    } else {
-                        print("✅ [HSManager] Hammerspoon reloaded via AppleScript.")
-                    }
+        if isRunning {
+            print("🔄 [HSManager] Hammerspoon is already running, executing reload script via AppleScript to ensure connection...")
+            let scriptSource = "tell application \"Hammerspoon\" to execute lua code \"hs.reload()\""
+            var errorDict: NSDictionary?
+            if let appleScript = NSAppleScript(source: scriptSource) {
+                appleScript.executeAndReturnError(&errorDict)
+                if let error = errorDict {
+                    print("❌ [HSManager] AppleScript reload failed: \(error)")
+                } else {
+                    print("✅ [HSManager] Hammerspoon reloaded via AppleScript.")
                 }
-            } else {
-                launchHS(workspace: workspace, url: appURL)
             }
         } else {
-            if !isRunning {
-                launchHS(workspace: workspace, url: appURL)
-            } else {
-                print("✅ [HSManager] Config unchanged and Hammerspoon is already running. Doing nothing.")
-            }
+            launchHS(workspace: workspace, url: appURL)
         }
     }
     

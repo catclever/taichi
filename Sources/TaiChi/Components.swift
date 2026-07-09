@@ -44,7 +44,7 @@ struct OrbitalAppIcon: View {
     var displayOpacity: Double {
         switch app.windowState {
         case .activeVisible: return 1.0
-        case .offscreen: return 0.7
+        case .offscreen: return 1.0 // 展示为实色
         case .windowless, .hidden: return 0.4
         case .notRunning: return 0.5
         }

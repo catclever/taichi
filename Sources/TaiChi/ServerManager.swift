@@ -57,7 +57,23 @@ class ServerManager: @unchecked Sendable {
             cleanupTimer?.invalidate()
             cleanupTimer = nil
             stopWorker()
+            
+            scriptCacheQueue.sync { scriptCache.removeAll() }
+            // 故意保留 stateCache 不清空，以便长线持久化状态不受网关重启影响
+            
             print("🛑 TaiChi Gateway stopped")
+        }
+    }
+    
+    @MainActor
+    func restart() {
+        print("🔄 Restarting TaiChi Gateway...")
+        stop()
+        
+        // Small delay to ensure port is freed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.start()
+            print("✅ TaiChi Gateway restarted and cache cleared")
         }
     }
     

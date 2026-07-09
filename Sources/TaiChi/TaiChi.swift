@@ -34,6 +34,15 @@ struct TaiChiApp {
 //   heuristic fallback will break again.
 // - Always ensure that handling a `.windowless` state uses `openApplication` to trigger
 //   a proper Reopen event rather than manually injecting AppleEvents or just activating.
+//
+// [Bug Fix Document]
+// 问题：常驻应用的窗口如果在其他 Space（空间），会被错误判定为无窗口（.windowless），导致在太极面板中显示为灰色（0.4透明度）。
+// 原因：原本直接依赖 AXUIElement (Accessibility API) 提取窗口，但该 API 仅能获取当前 Space 下的窗口。当应用窗口仅在其他 Space 时，AX 返回为空，代码直接返回了 `.windowless`。
+// 修复逻辑：
+// 1. 如果 AXUIElement 在当前 Space 没找到标准窗口，不再立即返回 `.windowless`。
+// 2. 放行至后备方案：使用 `CGWindowListCopyWindowInfo` (附带 `.optionAll` 选项) 在全系统范围内重新扫描。由于全局扫描能识别其他 Space 的窗口，从而准确判定该应用处于 `.offscreen` 状态。
+// 3. 配合将 `.offscreen` 状态的显示透明度由 0.7 提升至 1.0，实现真正的实色显示。
+// 注意事项：不要直接依赖 `axWindows.isEmpty` 断定应用无窗口，务必通过 `CGWindowListCopyWindowInfo` 兜底检查跨桌面状态。
 // =========================================================================================
 extension NSRunningApplication {
     var appWindowState: AppWindowState {
@@ -49,29 +58,24 @@ extension NSRunningApplication {
         let result = AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value)
         
         var axSucceeded = false
+        var hasStandardWindowInCurrentSpace = false
+        
         if result == .success, let axWindows = value as? [AXUIElement] {
             axSucceeded = true
-            if axWindows.isEmpty { 
-                return .windowless 
-            }
-            var hasStandardWindow = false
             for axWindow in axWindows {
                 var subroleRef: CFTypeRef?
                 if AXUIElementCopyAttributeValue(axWindow, kAXSubroleAttribute as CFString, &subroleRef) == .success,
                    let subrole = subroleRef as? String {
                     if subrole == kAXStandardWindowSubrole {
-                        hasStandardWindow = true
+                        hasStandardWindowInCurrentSpace = true
                         break
                     }
                 }
             }
-            if !hasStandardWindow {
-                return .windowless
-            }
         }
         
-        if axSucceeded {
-            // We know it has a standard window. Is it on the current screen?
+        if axSucceeded && hasStandardWindowInCurrentSpace {
+            // We know it has a standard window in the current space. Is it actually visible on screen?
             let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
             guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
                 return .offscreen 
@@ -89,7 +93,7 @@ extension NSRunningApplication {
             }
             return .offscreen
         } else {
-            // Fallback for apps where AX fails (like Zed)
+            // Fallback for apps where AX fails (like Zed) or apps that have no windows in the CURRENT space (AX returns empty)
             let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
             guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
                 return .windowless 
@@ -321,11 +325,17 @@ class TaiChiWindow: NSWindow {
 
 // MARK: - Views
 
+enum DefaultAppsFilterMode: String {
+    case all = "全部应用"
+    case hidden = "隐藏应用"
+    case injected = "注入应用"
+}
 
 struct TaiChiOverlayView: View {
     var config: TaiChiConfig
     @State private var isVisible: Bool = false
     @State private var activeView: HubDimension = .defaultApps
+    @State private var defaultAppsFilter: DefaultAppsFilterMode = .all
     
     @ObservedObject private var settings = TaiChiSettings.shared
     @State private var combinedApps: [CombinedApp] = []
@@ -391,11 +401,21 @@ struct TaiChiOverlayView: View {
                                     } else if dimension == .presetPaths {
                                         clickRotation -= 180
                                         activeView = dimension
+                                    } else if dimension == .defaultApps {
+                                        if activeView == .defaultApps {
+                                            clickRotation += 180
+                                            switch defaultAppsFilter {
+                                            case .all: defaultAppsFilter = .hidden
+                                            case .hidden: defaultAppsFilter = .injected
+                                            case .injected: defaultAppsFilter = .all
+                                            }
+                                        } else {
+                                            activeView = .defaultApps
+                                            defaultAppsFilter = .all
+                                        }
+                                        refreshApps()
                                     } else {
                                         activeView = dimension
-                                        if dimension == .defaultApps {
-                                            refreshApps()
-                                        }
                                     }
                                 }
                             }
@@ -419,7 +439,7 @@ struct TaiChiOverlayView: View {
                             Image(systemName: "eye.slash")
                                 .font(.system(size: 16))
                                 .foregroundColor(.white.opacity(0.3))
-                            Text("无应用")
+                            Text(defaultAppsFilter == .all ? "无应用" : (defaultAppsFilter == .hidden ? "无隐藏应用" : "无注入应用"))
                                 .font(.system(size: 9, weight: .medium, design: .rounded))
                                 .foregroundColor(.white.opacity(0.35))
                         }
@@ -516,7 +536,19 @@ struct TaiChiOverlayView: View {
             }
         }
         
-        combinedApps = result
+        switch defaultAppsFilter {
+        case .all:
+            combinedApps = result
+        case .hidden:
+            combinedApps = result.filter { $0.windowState == .hidden }
+        case .injected:
+            let injectedIDs = Set(settings.activeInjectedApps.map { $0.id })
+            combinedApps = result.filter { app in
+                let bundleID = app.residentApp?.id ?? app.runningApp?.bundleIdentifier ?? ""
+                return injectedIDs.contains(bundleID)
+            }
+        }
+        
         appScrollOffset = 0
     }
     

@@ -199,6 +199,7 @@ class WindowManager {
         let appName = app.localizedName ?? ""
         var raised = false
         let axApp = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(axApp, 0.5) // 500ms timeout to prevent hanging on unresponsive apps
         var value: CFTypeRef?
         
         let result = AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value)

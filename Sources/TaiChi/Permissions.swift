@@ -48,8 +48,19 @@ class PermissionsManager: ObservableObject {
         // macOS will automatically add the app to the list and show the popup.
     }
     
+    // [Bug Fix Document]
+    // 问题：太极在首次请求录屏权限时，系统不弹窗，且未将应用添加至系统设置的录屏权限清单中。
+    // 原因：
+    // 1. 较新的 macOS 不仅要求通过 `CGRequestScreenCaptureAccess()` 发起请求，还要求 `Info.plist` 中必须包含 `NSScreenCaptureUsageDescription` 描述（在 build_app.sh 中修复）。
+    // 2. 在部分场景下，纯预检请求可能依旧被系统丢弃。必须附加一次实质性的截图（或图像流捕获）行为才能强制唤起系统弹窗并注册到列表中。
+    // 3. SettingsView 原先的“去授权”按钮仅打开了系统设置页面，未实际调用过 `requestScreenRecording`。
+    // 修复逻辑：
+    // 在调用 `CGRequestScreenCaptureAccess()` 的同时，执行一次基于 `CGWindowListCreateImage` 的空截图探测，强行触发系统层面的权限注册。同时补充了 Info.plist 的声明，并在 UI 层绑定了实际调用。
+    // 注意事项：不要移除 `CGWindowListCreateImage` 探测，否则在 macOS 14.4+ 上可能再次遭遇静默授权失败问题。
     func requestScreenRecording() {
         CGRequestScreenCaptureAccess()
+        // Force macOS to add the app to the Screen Recording permissions list by attempting a capture
+        let _ = CGWindowListCreateImage(CGRect.null, .optionOnScreenOnly, kCGNullWindowID, .boundsIgnoreFraming)
         hasScreenRecording = CGPreflightScreenCaptureAccess()
     }
     

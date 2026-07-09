@@ -56,7 +56,13 @@ struct BasicFeaturesTab: View {
             Section(header: HStack {
                 Text("常驻应用").font(.headline)
                 Spacer()
-                Button(action: { addApp { settings.residentApps.append($0 as! ResidentApp) } }) {
+                Button(action: { 
+                    addApp { id, name, path in 
+                        if !settings.residentApps.contains(where: { $0.id == id }) {
+                            settings.residentApps.append(ResidentApp(id: id, name: name, path: path)) 
+                        }
+                    } 
+                }) {
                     Image(systemName: "plus")
                 }.buttonStyle(.borderless)
             }) {
@@ -89,7 +95,13 @@ struct BasicFeaturesTab: View {
                     }.buttonStyle(.borderless)
                 }
                 Spacer()
-                Button(action: { addApp { settings.monitoredApps.append($0 as! MonitoredApp) } }) {
+                Button(action: { 
+                    addApp { id, name, path in 
+                        if !settings.monitoredApps.contains(where: { $0.id == id }) {
+                            settings.monitoredApps.append(MonitoredApp(id: id, name: name, path: path)) 
+                        }
+                    } 
+                }) {
                     Image(systemName: "plus")
                 }.buttonStyle(.borderless)
             }) {
@@ -136,7 +148,7 @@ struct BasicFeaturesTab: View {
         }
     }
     
-    private func addApp(completion: @escaping (Any) -> Void) {
+    private func addApp(completion: @escaping (String, String, String) -> Void) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -145,15 +157,7 @@ struct BasicFeaturesTab: View {
             let bundle = Bundle(url: url)
             let id = bundle?.bundleIdentifier ?? url.lastPathComponent
             let name = bundle?.infoDictionary?["CFBundleName"] as? String ?? url.deletingPathExtension().lastPathComponent
-            
-            let compStr = String(describing: completion)
-            if compStr.contains("ResidentApp") {
-                completion(ResidentApp(id: id, name: name, path: url.path))
-            } else if compStr.contains("MonitoredApp") {
-                completion(MonitoredApp(id: id, name: name, path: url.path))
-            } else {
-                completion(FloatingApp(id: id, name: name, path: url.path))
-            }
+            completion(id, name, url.path)
         }
     }
 }
@@ -374,6 +378,14 @@ struct SystemSettingsTab: View {
                         TextField("端口号", value: $settings.httpPort, formatter: NumberFormatter())
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .frame(width: 100)
+                        
+                        Spacer()
+                        
+                        Button(action: {
+                            ServerManager.shared.restart()
+                        }) {
+                            Label("重启网关 (清除缓存)", systemImage: "arrow.clockwise")
+                        }
                     }
                     HStack {
                         Text("服务脚本存放目录:")
@@ -410,7 +422,10 @@ struct SystemSettingsTab: View {
                         Text(permissions.hasAccessibility ? "辅助功能权限（已授权）" : "辅助功能权限（未授权，用于跨桌面探测）")
                         Spacer()
                         if !permissions.hasAccessibility {
-                            Button("去授权") { permissions.openSystemPreferences(pane: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") }
+                            Button("去授权") { 
+                                permissions.requestAccessibility()
+                                permissions.openSystemPreferences(pane: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") 
+                            }
                         }
                     }
                     
@@ -420,7 +435,10 @@ struct SystemSettingsTab: View {
                         Text(permissions.hasScreenRecording ? "屏幕录制权限（已授权）" : "屏幕录制权限（未授权，用于获取真实窗口名）")
                         Spacer()
                         if !permissions.hasScreenRecording {
-                            Button("去授权") { permissions.openSystemPreferences(pane: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") }
+                            Button("去授权") { 
+                                permissions.requestScreenRecording()
+                                permissions.openSystemPreferences(pane: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") 
+                            }
                         }
                     }
                 }

@@ -67,6 +67,8 @@ cat <<EOF > "$APP_BUNDLE/Contents/Info.plist"
     <true/>
     <key>NSAppleEventsUsageDescription</key>
     <string>太极需要此权限来跨桌面唤醒窗口</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>太极需要屏幕录制权限来获取其他桌面的窗口信息</string>
 </dict>
 </plist>
 EOF

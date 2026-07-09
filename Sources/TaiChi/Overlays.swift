@@ -113,7 +113,7 @@ struct MonitoredAppsOverlay: View {
     private func refreshWindows() {
         Task {
             let runningApps = NSWorkspace.shared.runningApplications
-            let combinedApps = settings.monitoredApps + settings.activeInjectedApps
+            let combinedApps = settings.monitoredApps
             var uniqueAppIDs = Set<String>()
             var uniqueApps = [MonitoredApp]()
             for app in combinedApps {
@@ -123,8 +123,8 @@ struct MonitoredAppsOverlay: View {
                 }
             }
             
-            let monitoredPIDs = uniqueApps.compactMap { app in
-                runningApps.first(where: { $0.bundleIdentifier == app.id })?.processIdentifier
+            let monitoredPIDs = uniqueApps.flatMap { app in
+                runningApps.filter({ $0.bundleIdentifier == app.id }).map({ $0.processIdentifier })
             }
             
             var fetchedWindows = await WindowManager.shared.getWindows(for: monitoredPIDs)

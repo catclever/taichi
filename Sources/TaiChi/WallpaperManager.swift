@@ -35,74 +35,13 @@ actor WallpaperManager {
                         }
                     }
                     let historyMap = await MainActor.run { TaiChiSettings.shared.wallpaperHistory }
-                    
-                    let intervalMinutes = config.globalIntervalMinutes ?? 1440
-                    let intervalSeconds = max(60, intervalMinutes * 60)
-                    
                     let now = Date()
-                    
                     var screensToFetch: [ScreenInfo] = []
                     
                     for screen in screens {
                         let history = historyMap[screen.uuid] ?? []
-                        let lastTimestamp = history.last?.timestamp ?? Date.distantPast
-                        let elapsed = now.timeIntervalSince(lastTimestamp)
-                        
-                        var shouldFetch = false
-                        
-                        // 1. Check global interval threshold
-                        if elapsed >= Double(intervalSeconds) {
-                            shouldFetch = true
-                        }
-                        
-                        // 2. Check daily fixed time config (with sleep compensation)
-                        if let autoConfig = config.autoTimeConfig, 
-                           let times = autoConfig.times,
-                           let threshold = autoConfig.checkThresholdSeconds {
-                            
-                            let calendar = Calendar.current
-                            var timeMatched = false
-                            
-                            for timeStr in times {
-                                let components = timeStr.split(separator: ":")
-                                if components.count == 2,
-                                   let hour = Int(components[0]),
-                                   let minute = Int(components[1]) {
-                                    
-                                    if let targetDate = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: now) {
-                                        // If current time is past the target time today, AND we haven't updated since that target time
-                                        if now >= targetDate && lastTimestamp < targetDate {
-                                            timeMatched = true
-                                            break
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            if timeMatched && elapsed >= Double(threshold) {
-                                // If specific screens are targeted
-                                if let targetedScreens = autoConfig.screens, !targetedScreens.isEmpty {
-                                    if targetedScreens.contains(screen.uuid) || targetedScreens.contains(screen.name) {
-                                        shouldFetch = true
-                                    }
-                                } else {
-                                    shouldFetch = true
-                                }
-                            }
-                        }
-                        
-                        // 3. Debounce to prevent Rate Limit Death Loop
-                        if shouldFetch {
-                            let lastAttempt = lastFetchAttempts[screen.uuid] ?? Date.distantPast
-                            if now.timeIntervalSince(lastAttempt) < 900 {
-                                shouldFetch = false // Skip if attempted within last 15 mins
-                            } else {
-                                lastFetchAttempts[screen.uuid] = now
-                            }
-                        }
-                        
-                        if shouldFetch {
-                            print("🚨 [WallpaperManager] screensToFetch APPEND: \(screen.uuid) (lastTimestamp: \(lastTimestamp), now: \(now))")
+                        if shouldUpdateWallpaper(for: screen, history: history, config: config, now: now) {
+                            print("🚨 [WallpaperManager] Loop triggered fetch for: \(screen.name) (uuid: \(screen.uuid))")
                             screensToFetch.append(screen)
                         }
                     }
@@ -112,8 +51,8 @@ actor WallpaperManager {
                     }
                 }
                 
-                // Sleep for 60 seconds and check again
-                try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+                // Sleep for 900 seconds (15 mins) and check again
+                try? await Task.sleep(nanoseconds: 900 * 1_000_000_000)
             }
         }
     }
@@ -126,21 +65,16 @@ actor WallpaperManager {
             
             let config = await MainActor.run { TaiChiSettings.shared.wallpaperEngineConfig }
             let historyMap = await MainActor.run { TaiChiSettings.shared.wallpaperHistory }
-            
-            let intervalMinutes = config.globalIntervalMinutes ?? 1440
-            let intervalSeconds = max(60, intervalMinutes * 60)
             let now = Date()
-            
             var screensToFetch: [ScreenInfo] = []
             
             for screen in screens {
                 let history = historyMap[screen.uuid] ?? []
-                if let lastEntry = history.last {
-                    let elapsed = now.timeIntervalSince(lastEntry.timestamp)
-                    if elapsed >= Double(intervalSeconds) {
-                        screensToFetch.append(screen)
-                    } else {
-                        // Restore the last known wallpaper for this screen
+                if shouldUpdateWallpaper(for: screen, history: history, config: config, now: now) {
+                    screensToFetch.append(screen)
+                } else {
+                    // Restore the last known wallpaper for this screen
+                    if let lastEntry = history.last {
                         let cacheDir = ("~/.cache/taichi/wallpapers/" as NSString).expandingTildeInPath
                         let destPath = (cacheDir as NSString).appendingPathComponent("\(lastEntry.photoId).jpg")
                         if FileManager.default.fileExists(atPath: destPath) {
@@ -148,9 +82,9 @@ actor WallpaperManager {
                         } else {
                             screensToFetch.append(screen)
                         }
+                    } else {
+                        screensToFetch.append(screen)
                     }
-                } else {
-                    screensToFetch.append(screen)
                 }
             }
             
@@ -158,6 +92,79 @@ actor WallpaperManager {
                 await triggerAutoChange(for: screensToFetch)
             }
         }
+    }
+    
+    private func shouldUpdateWallpaper(for screen: ScreenInfo, history: [WallpaperHistoryEntry], config: WallpaperEngineConfig, now: Date) -> Bool {
+        let lastTimestamp = history.last?.timestamp ?? Date.distantPast
+        let elapsed = now.timeIntervalSince(lastTimestamp)
+        
+        let lastAttempt = lastFetchAttempts[screen.uuid] ?? Date.distantPast
+        if now.timeIntervalSince(lastAttempt) < 900 {
+            return false // Debounce: skip if attempted within last 15 mins
+        }
+        
+        let screenConfig = config.screens?[screen.uuid] ?? config.screens?[screen.name]
+        
+        if let isEnabled = screenConfig?.enabled, !isEnabled {
+            return false
+        }
+        
+        // 1. Check interval condition
+        let intervalMinutes = screenConfig?.intervalMinutes ?? config.globalIntervalMinutes ?? 1440
+        if intervalMinutes > 0 {
+            let intervalSeconds = max(60, intervalMinutes * 60)
+            
+            if elapsed >= Double(intervalSeconds) {
+                lastFetchAttempts[screen.uuid] = now
+                return true
+            }
+        }
+        
+        // 2. Check daily fixed time config
+        let autoConfig = screenConfig?.autoTimeConfig ?? config.autoTimeConfig
+        if let autoConfig = autoConfig, 
+           let times = autoConfig.times,
+           let threshold = autoConfig.checkThresholdSeconds {
+            
+            if let targetedScreens = autoConfig.screens, !targetedScreens.isEmpty {
+                if !targetedScreens.contains(screen.uuid) && !targetedScreens.contains(screen.name) {
+                    return false
+                }
+            }
+            
+            let calendar = Calendar.current
+            let condition = autoConfig.condition ?? "later"
+            var timeMatched = false
+            
+            for timeStr in times {
+                let components = timeStr.split(separator: ":")
+                if components.count == 2,
+                   let hour = Int(components[0]),
+                   let minute = Int(components[1]),
+                   let targetDate = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: now) {
+                    
+                    if condition == "earlier" {
+                        if now < targetDate {
+                            timeMatched = true
+                            break
+                        }
+                    } else {
+                        // "later"
+                        if now >= targetDate && lastTimestamp < targetDate {
+                            timeMatched = true
+                            break
+                        }
+                    }
+                }
+            }
+            
+            if timeMatched && elapsed >= Double(threshold) {
+                lastFetchAttempts[screen.uuid] = now
+                return true
+            }
+        }
+        
+        return false
     }
     
     private func triggerAutoChange(for specificScreens: [ScreenInfo]? = nil) async {

@@ -160,6 +160,40 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         }
     }
     
+    func sendTargetedCommand(_ commandId: Int) {
+        let bundleId = state.bundleIdentifier
+        let supportedApps = ["com.apple.Music", "com.spotify.client", "com.netease.163music", "com.tencent.QQMusicMac"]
+        
+        // If it's a supported app, try AppleScript first
+        if supportedApps.contains(bundleId) {
+            let scriptCommand: String
+            switch commandId {
+            case 2: scriptCommand = "playpause"
+            case 4: scriptCommand = "next track"
+            case 5: scriptCommand = "previous track"
+            default: scriptCommand = ""
+            }
+            
+            if !scriptCommand.isEmpty {
+                let scriptSource = "tell application id \"\(bundleId)\" to \(scriptCommand)"
+                if let script = NSAppleScript(source: scriptSource) {
+                    var errorInfo: NSDictionary?
+                    script.executeAndReturnError(&errorInfo)
+                    if errorInfo == nil {
+                        print("✅ [MediaObserver] Successfully sent targeted command '\(scriptCommand)' to \(bundleId)")
+                        return
+                    } else {
+                        print("⚠️ [MediaObserver] Targeted AppleScript failed for \(bundleId): \(errorInfo?.description ?? "unknown error"). Falling back to global broadcast.")
+                    }
+                }
+            }
+        }
+        
+        // Fallback to global broadcast
+        print("ℹ️ [MediaObserver] Sending global broadcast command \(commandId)")
+        sendCommand(commandId)
+    }
+    
     func seek(to time: Double) {
         guard let resourcePath = Bundle.module.resourcePath else { return }
         let adapterPath = resourcePath + "/MediaRemoteAdapter/mediaremote-adapter.pl"

@@ -54,15 +54,20 @@ struct WallpaperEngineConfig: Codable, Equatable {
         var url: String?
     }
 
-    struct ScreenConfig: Codable, Equatable {
-        var channels: [String]?
-    }
-    
     struct AutoTimeConfig: Codable, Equatable {
         var screens: [String]?
         var times: [String]?
+        var condition: String?
         var checkThresholdSeconds: Int?
     }
+
+    struct ScreenConfig: Codable, Equatable {
+        var enabled: Bool?
+        var channels: [String]?
+        var intervalMinutes: Int?
+        var autoTimeConfig: AutoTimeConfig?
+    }
+
     
     var isEngineEnabled: Bool?
     var globalIntervalMinutes: Int?

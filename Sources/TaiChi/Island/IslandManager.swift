@@ -1,6 +1,7 @@
 import Cocoa
 import SwiftUI
 import Combine
+import os.log
 
 // MARK: - Bug Fix Documentation
 // 1. Problem Fixed: Transparent Panel Blocking Clicks
@@ -23,8 +24,8 @@ import Combine
 public class IslandManager: NSObject, NSWindowDelegate {
     public static let shared = IslandManager()
     
-    private var window: NSPanel?
-    private var hostingView: NSHostingView<IslandView>?
+    private var window: NSWindow?
+    private var hostingView: NSHostingView<AnyView>?
     private var cancellables = Set<AnyCancellable>()
     private var hoverTimer: Timer?
     
@@ -35,37 +36,49 @@ public class IslandManager: NSObject, NSWindowDelegate {
     public func setup() {
         guard window == nil else { return }
         
-        let panel = NSPanel(
+        let panel = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 100), // Base size, SwiftUI will resize
-            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         
         panel.level = NSWindow.Level(rawValue: Int(NSWindow.Level.mainMenu.rawValue) + 3)
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.isOpaque = false
         panel.delegate = self
         
-        // Use a standard NSHostingView. We handle clicks dynamically by toggling ignoresMouseEvents.
         let islandView = IslandView()
-        let hostingView = NSHostingView(rootView: islandView)
-        // Make the hosting view transparent
+            .environmentObject(IslandStateModel.shared)
+        
+        let hostingView = NSHostingView(rootView: AnyView(islandView))
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingView.frame = panel.contentRect(forFrameRect: panel.frame)
         panel.contentView = hostingView
         self.hostingView = hostingView
         self.window = panel
         
+        panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
+        
         positionWindow()
         
-
         // Listen to screen changes to reposition
         NotificationCenter.default.addObserver(self, selector: #selector(positionWindow), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         
+        IslandStateModel.shared.$activeScreenIndex
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.positionWindow()
+            }
+            .store(in: &cancellables)
+        
         panel.makeKeyAndOrderFront(nil)
         
+        os_log("TaiChi_DEBUG: IslandManager setup complete. Window frame: %{public}@, alpha: %f, isVisible: %d", type: .error, String(describing: panel.frame), panel.alphaValue, panel.isVisible)
         // Add to CGSSpace to immune against Mission Control space switching
         NotchSpaceManager.shared.notchSpace.windows.insert(panel)
         
@@ -119,18 +132,27 @@ public class IslandManager: NSObject, NSWindowDelegate {
     }
     
     @objc private func positionWindow() {
-        guard let window = window, let screen = NSScreen.screens.first else { return }
+        guard let window = window else { return }
         
-        // The screen with the notch is typically the built-in screen.
-        // If there's a notch, safeAreaInsets.top is > 0 (typically 32 or 38).
-        let notchHeight = screen.safeAreaInsets.top
+        let stateModel = IslandStateModel.shared
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return }
+        
+        var screenIndex = stateModel.activeScreenIndex
+        if screenIndex >= screens.count {
+            screenIndex = 0
+            DispatchQueue.main.async {
+                stateModel.activeScreenIndex = 0
+            }
+        }
+        let screen = screens[screenIndex]
         
         // Detect if the display is being mirrored
         let mainDisplayId = CGMainDisplayID()
         let isMirrored = CGDisplayIsInMirrorSet(mainDisplayId) != 0
         
-        if notchHeight <= 0 || isMirrored {
-            window.alphaValue = 0.0 // Hide on non-notch screens or when mirrored
+        if isMirrored {
+            window.alphaValue = 0.0 // Hide when mirrored
         } else {
             window.alphaValue = 1.0
         }
@@ -139,9 +161,6 @@ public class IslandManager: NSObject, NSWindowDelegate {
         let height: CGFloat = 200 // Allow enough height for expansion
         
         let x = screen.frame.origin.x + (screen.frame.width - width) / 2
-        
-        // We want the TOP of our 200-height panel to be exactly at the top of the screen.
-        // screen.frame.maxY is the top of the screen.
         let y = screen.frame.maxY - height
         
         window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)

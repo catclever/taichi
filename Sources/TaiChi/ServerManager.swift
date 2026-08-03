@@ -23,6 +23,7 @@ class ServerManager: @unchecked Sendable {
     
     private var workerProcess: Foundation.Process?
     private var workerPort: Int?
+    private var wakeObserver: NSObjectProtocol?
     
     private init() {
         setupRoutes()
@@ -45,6 +46,17 @@ class ServerManager: @unchecked Sendable {
             cleanupTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
                 self?.cleanupCaches()
             }
+            
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: nil) { [weak self] _ in
+                DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 3.0) {
+                    self?.reinjectActiveApps()
+                }
+            }
+            
+            // Auto-discover and re-inject apps on startup
+            DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.discoverRunningInjectedApps()
+            }
         } catch {
             print("❌ Failed to start TaiChi Gateway: \(error)")
         }
@@ -56,6 +68,12 @@ class ServerManager: @unchecked Sendable {
             isRunning = false
             cleanupTimer?.invalidate()
             cleanupTimer = nil
+            
+            if let obs = wakeObserver {
+                NSWorkspace.shared.notificationCenter.removeObserver(obs)
+                wakeObserver = nil
+            }
+            
             stopWorker()
             
             scriptCacheQueue.sync { scriptCache.removeAll() }
@@ -189,6 +207,111 @@ class ServerManager: @unchecked Sendable {
         }
     }
     
+    private func reinjectActiveApps() {
+        print("⏰ System woke up from sleep. Re-injecting Cyber mode hooks...")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let activeApps = TaiChiSettings.shared.activeInjectedApps
+            let runningApps = NSWorkspace.shared.runningApplications
+            guard let workerPort = self.workerPort else { return }
+            
+            DispatchQueue.global(qos: .background).async {
+                for monitoredApp in activeApps {
+                    let finalAppId = monitoredApp.id
+                    if let app = runningApps.first(where: { $0.bundleIdentifier == finalAppId }),
+                       let portStr = self.getDebuggingPort(for: app.processIdentifier),
+                       let targetPort = Int(portStr) {
+                        
+                        print("🔄 Re-invoking worker for \(finalAppId) on port \(targetPort)...")
+                        var components = URLComponents()
+                        components.scheme = "http"
+                        components.host = "127.0.0.1"
+                        components.port = workerPort
+                        components.path = "/script/apps/\(finalAppId)/worker/index"
+                        components.queryItems = [URLQueryItem(name: "port", value: String(targetPort))]
+                        
+                        if let url = components.url {
+                            let task = URLSession.shared.dataTask(with: url) { data, response, error in
+                                if let error = error {
+                                    print("⚠️ Wake reinject failed for \(finalAppId): \(error.localizedDescription)")
+                                } else if let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 {
+                                    print("✅ Wake reinject succeeded for \(finalAppId)")
+                                }
+                            }
+                            task.resume()
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func discoverRunningInjectedApps() {
+        print("🔍 Scanning for previously injected apps...")
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = ["-c", "ps x -o pid,command | grep -- '--remote-debugging-port=' | grep -v grep"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        try? task.run()
+        task.waitUntilExit()
+        
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        var discoveredAppIDs: [String] = []
+        
+        if let output = String(data: data, encoding: .utf8) {
+            let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
+            let runningApps = NSWorkspace.shared.runningApplications
+            
+            for line in lines {
+                let parts = line.trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1)
+                if parts.count == 2, let pidString = parts.first, let pid = pid_t(pidString) {
+                    if let app = runningApps.first(where: { $0.processIdentifier == pid }), let bundleId = app.bundleIdentifier {
+                        discoveredAppIDs.append(bundleId)
+                    }
+                }
+            }
+        }
+        
+        DispatchQueue.main.async { [weak self] in
+            let settings = TaiChiSettings.shared
+            let runningApps = NSWorkspace.shared.runningApplications
+            
+            for appId in discoveredAppIDs {
+                if !settings.activeInjectedApps.contains(where: { $0.id == appId }) {
+                    if let app = runningApps.first(where: { $0.bundleIdentifier == appId }), let url = app.bundleURL {
+                        let appName = app.localizedName ?? appId
+                        let monitored = MonitoredApp(id: appId, name: appName, path: url.path)
+                        settings.activeInjectedApps.append(monitored)
+                        print("🔍 Auto-discovered running injected app: \(appName) (\(appId))")
+                        
+                        // Register Hotkey Telescope if needed
+                        let hotkey = settings.hotkeyTelescope
+                        Task {
+                            let bindings: [[String: Any]] = [
+                                [
+                                    "mods": hotkey.modifiers,
+                                    "key": hotkey.key,
+                                    "type": "lua",
+                                    "luaAction": "taichi.triggerInspector"
+                                ]
+                            ]
+                            let params: [String: Any] = [
+                                "app": appName,
+                                "profileId": "taichi_inspector",
+                                "bindings": bindings
+                            ]
+                            try? await HSManager.shared.sendAction(action: "hotkey.register", params: params)
+                        }
+                    }
+                }
+            }
+            
+            // Always call reinjectActiveApps to ensure both old and newly discovered apps get re-connected
+            self?.reinjectActiveApps()
+        }
+    }
+    
     private func setupRoutes() {
         // Handle OPTIONS globally and catch all deep /src/ paths before routing
         server.middleware.append { [weak self] request in
@@ -249,6 +372,12 @@ class ServerManager: @unchecked Sendable {
         server["/api/cyber/evaluate"] = { [weak self] request in
             return self?.handleCyberEvaluate(request) ?? .internalServerError
         }
+        
+        // 5. External Lyrics Push API
+        server["/api/lyrics/push"] = { [weak self] request in
+            return self?.handleLyricsPush(request) ?? .internalServerError
+        }
+        
         // 5. List Config Injection API
         server["/api/config/list/:listName"] = { [weak self] request in
             return self?.handleListConfigRequest(request) ?? .internalServerError
@@ -411,6 +540,22 @@ class ServerManager: @unchecked Sendable {
         }
         
         return .internalServerError
+    }
+    
+    private func handleLyricsPush(_ request: HttpRequest) -> HttpResponse {
+        let body = Data(request.body)
+        guard let json = try? JSONSerialization.jsonObject(with: body, options: []) as? [String: Any],
+              let title = json["title"] as? String,
+              let artist = json["artist"] as? String,
+              let lrc = json["lrc"] as? String else {
+            return jsonResponse(["error": "Missing title, artist, or lrc in JSON payload"], statusCode: 400)
+        }
+        
+        DispatchQueue.main.async {
+            LyricManager.shared.pushLyrics(title: title, artist: artist, lrc: lrc)
+        }
+        
+        return jsonResponse(["status": "success"])
     }
     
     private func handleVarRequest(_ request: HttpRequest) -> HttpResponse {
@@ -842,11 +987,16 @@ class ServerManager: @unchecked Sendable {
                     if !TaiChiSettings.shared.activeInjectedApps.contains(where: { $0.id == finalAppId }) {
                         TaiChiSettings.shared.activeInjectedApps.append(monitoredApp)
                         
+                        // [Bug Fix]
+                        // 1. Problem: 临时注入应用时，寻星镜快捷键被硬编码为 `cmd + alt + I`。这会导致如果目标应用（如 Antigravity 这种 Electron 应用）在全局静默拦截了默认的开发者工具快捷键，寻星镜就无法激活。
+                        // 2. Resolution: 移除硬编码，改为动态读取用户在前端配置好的 `TaiChiSettings.shared.hotkeyTelescope`，从而允许用户避开冲突的热键组合。
+                        // 3. Caveats: 确保该 `hotkeyTelescope` 与 `taichi_env.lua` 中的配置保持一致，且避免用户不小心在此处配置了其他已被严重拦截的原生快捷键。
+                        let hotkey = TaiChiSettings.shared.hotkeyTelescope
                         Task {
                             let bindings: [[String: Any]] = [
                                 [
-                                    "mods": ["cmd", "alt"],
-                                    "key": "I",
+                                    "mods": hotkey.modifiers,
+                                    "key": hotkey.key,
                                     "type": "lua",
                                     "luaAction": "taichi.triggerInspector"
                                 ]

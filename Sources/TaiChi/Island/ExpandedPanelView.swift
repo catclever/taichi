@@ -37,7 +37,7 @@ struct ExpandedPanelView: View {
                 }
                 .onTapGesture {
                     // Play/Pause
-                    mediaObserver.sendCommand(2) // 2 is kMRATogglePlayPause
+                    mediaObserver.sendTargetedCommand(2) // 2 is kMRATogglePlayPause
                 }
                 .padding(.leading, 20)
                 
@@ -47,25 +47,29 @@ struct ExpandedPanelView: View {
                     ZStack(alignment: .leading) {
                         if showingControls {
                             // Playback Controls
-                            HStack(spacing: 30) {
+                            VStack {
                                 Spacer()
-                                Button(action: { mediaObserver.sendCommand(5) }) { // Previous
-                                    Image(systemName: "backward.fill")
-                                        .font(.title2)
-                                        .foregroundColor(.white)
-                                }.buttonStyle(PlainButtonStyle())
-                                
-                                Button(action: { mediaObserver.sendCommand(2) }) { // Play/Pause
-                                    Image(systemName: mediaObserver.state.isPlaying ? "pause.fill" : "play.fill")
-                                        .font(.title)
-                                        .foregroundColor(.white)
-                                }.buttonStyle(PlainButtonStyle())
-                                
-                                Button(action: { mediaObserver.sendCommand(4) }) { // Next
-                                    Image(systemName: "forward.fill")
-                                        .font(.title2)
-                                        .foregroundColor(.white)
-                                }.buttonStyle(PlainButtonStyle())
+                                HStack(spacing: 30) {
+                                    Spacer()
+                                    Button(action: { mediaObserver.sendTargetedCommand(5) }) { // Previous
+                                        Image(systemName: "backward.fill")
+                                            .font(.title2)
+                                            .foregroundColor(.white)
+                                    }.buttonStyle(PlainButtonStyle())
+                                    
+                                    Button(action: { mediaObserver.sendTargetedCommand(2) }) { // Play/Pause
+                                        Image(systemName: mediaObserver.state.isPlaying ? "pause.fill" : "play.fill")
+                                            .font(.title)
+                                            .foregroundColor(.white)
+                                    }.buttonStyle(PlainButtonStyle())
+                                    
+                                    Button(action: { mediaObserver.sendTargetedCommand(4) }) { // Next
+                                        Image(systemName: "forward.fill")
+                                            .font(.title2)
+                                            .foregroundColor(.white)
+                                    }.buttonStyle(PlainButtonStyle())
+                                    Spacer()
+                                }
                                 Spacer()
                             }
                         } else {
@@ -141,22 +145,55 @@ struct ExpandedPanelView: View {
             .padding(.top, 38)
             .padding(.bottom, 20)
             
-            // Pin Button
-            Button(action: {
-                withAnimation {
-                    stateModel.isPinned.toggle()
+            // Top Right Buttons
+            HStack(spacing: 8) {
+                // Screen Switch Button
+                Button(action: {
+                    let screenCount = NSScreen.screens.count
+                    guard screenCount > 1 else { return }
+                    withAnimation {
+                        stateModel.activeScreenIndex = (stateModel.activeScreenIndex + 1) % screenCount
+                    }
+                }) {
+                    Image(systemName: "display")
+                        .font(.system(size: 10))
+                        .foregroundColor(NSScreen.screens.count > 1 ? .white : .gray.opacity(0.5))
+                        .padding(8)
+                        .contentShape(Rectangle())
                 }
-            }) {
-                Image(systemName: stateModel.isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 10))
-                    .foregroundColor(stateModel.isPinned ? .white : .gray.opacity(0.5))
-                    .rotationEffect(.degrees(30))
-                    .padding(8)
-                    .contentShape(Rectangle())
+                .buttonStyle(PlainButtonStyle())
+                
+                // Lyric Pin Button
+                Button(action: {
+                    withAnimation {
+                        stateModel.isLyricPinned.toggle()
+                    }
+                }) {
+                    Image(systemName: stateModel.isLyricPinned ? "music.note.list" : "music.note")
+                        .font(.system(size: 10))
+                        .foregroundColor(stateModel.isLyricPinned ? .white : .gray.opacity(0.5))
+                        .padding(8)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                // Pin Button
+                Button(action: {
+                    withAnimation {
+                        stateModel.isPinned.toggle()
+                    }
+                }) {
+                    Image(systemName: stateModel.isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 10))
+                        .foregroundColor(stateModel.isPinned ? .white : .gray.opacity(0.5))
+                        .rotationEffect(.degrees(30))
+                        .padding(8)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
             }
-            .buttonStyle(PlainButtonStyle())
-            .padding(.trailing, 16)
-            .padding(.top, 16)
+            .padding(.trailing, 12)
+            .padding(.top, 12)
         }
         .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
         .onReceive(timer) { _ in

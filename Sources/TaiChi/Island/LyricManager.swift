@@ -82,9 +82,9 @@ class LyricManager: ObservableObject, @unchecked Sendable {
         }
     }
     
-    func fetchLyrics(title: String, artist: String) {
-        // 如果 10 秒内有过推送歌词，就不要去网易云查了，防止覆盖推送过来的歌词
-        if Date().timeIntervalSince(lastPushTime) < 10.0 {
+    func fetchLyrics(title: String, artist: String, isFallback: Bool = false) {
+        // 如果 10 秒内有过推送歌词，且不是降级触发，就不要去网易云查了，防止覆盖推送过来的歌词
+        if !isFallback && Date().timeIntervalSince(lastPushTime) < 10.0 {
             return
         }
         

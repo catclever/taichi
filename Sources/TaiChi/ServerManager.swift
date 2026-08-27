@@ -24,6 +24,8 @@ class ServerManager: @unchecked Sendable {
     private var workerProcess: Foundation.Process?
     private var workerPort: Int?
     private var wakeObserver: NSObjectProtocol?
+    private var cyberMediaHandlers: [String: [String: String]] = [:]
+
     
     private init() {
         setupRoutes()
@@ -35,7 +37,7 @@ class ServerManager: @unchecked Sendable {
         
         let port = in_port_t(TaiChiSettings.shared.httpPort)
         do {
-            try server.start(port)
+            try server.start(port, forceIPv4: true)
             isRunning = true
             print("🚀 TaiChi Gateway started on port \(port)")
             
@@ -369,6 +371,12 @@ class ServerManager: @unchecked Sendable {
         }
         
         // 4.5 Cyber Evaluate API
+        
+        // 4.5 Cyber Media Handlers Registry
+        server["/api/cyber/media_handlers"] = { [weak self] request in
+            return self?.handleCyberMediaHandlers(request) ?? .internalServerError
+        }
+
         server["/api/cyber/evaluate"] = { [weak self] request in
             return self?.handleCyberEvaluate(request) ?? .internalServerError
         }
@@ -546,9 +554,19 @@ class ServerManager: @unchecked Sendable {
         let body = Data(request.body)
         guard let json = try? JSONSerialization.jsonObject(with: body, options: []) as? [String: Any],
               let title = json["title"] as? String,
-              let artist = json["artist"] as? String,
-              let lrc = json["lrc"] as? String else {
-            return jsonResponse(["error": "Missing title, artist, or lrc in JSON payload"], statusCode: 400)
+              let artist = json["artist"] as? String else {
+            return jsonResponse(["error": "Missing title or artist in JSON payload"], statusCode: 400)
+        }
+        
+        if let failed = json["failed"] as? Bool, failed {
+            DispatchQueue.main.async {
+                LyricManager.shared.fetchLyrics(title: title, artist: artist, isFallback: true)
+            }
+            return jsonResponse(["status": "fallback_triggered"])
+        }
+        
+        guard let lrc = json["lrc"] as? String else {
+            return jsonResponse(["error": "Missing lrc in JSON payload"], statusCode: 400)
         }
         
         DispatchQueue.main.async {
@@ -1427,36 +1445,21 @@ class ServerManager: @unchecked Sendable {
     
     // MARK: - Cyber Evaluate API
     
-    private func handleCyberEvaluate(_ request: HttpRequest) -> HttpResponse {
-        guard request.method == "POST" else {
-            return jsonResponse(["error": "Method Not Allowed"], statusCode: 405)
-        }
-        
-        let bodyData = Data(request.body)
-        guard let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
-              let appId = json["appId"] as? String,
-              let script = json["script"] as? String else {
-            return jsonResponse(["error": "Missing appId or script in JSON body"], statusCode: 400)
-        }
-        
+
+    func evaluateCyberScript(appId: String, script: String) -> (success: Bool, result: Any?, error: String?) {
         let activeInjectedAppIDs = DispatchQueue.main.sync {
             TaiChiSettings.shared.activeInjectedApps.map { $0.id }
         }
+        guard activeInjectedAppIDs.contains(appId) else { return (false, nil, "App is not injected") }
         
-        guard activeInjectedAppIDs.contains(appId) else {
-            return jsonResponse(["error": "App is not injected"], statusCode: 400)
-        }
-        
-        // Find debugging port
         let runningApps = NSWorkspace.shared.runningApplications
         guard let app = runningApps.first(where: { $0.bundleIdentifier == appId }),
               let portStr = getDebuggingPort(for: app.processIdentifier),
               let port = Int(portStr) else {
-            return jsonResponse(["error": "Cannot find debugging port"], statusCode: 500)
+            return (false, nil, "Cannot find debugging port")
         }
         
-        // 1. Fetch webSocketDebuggerUrl
-        guard let url = URL(string: "http://127.0.0.1:\(port)/json") else { return .internalServerError }
+        guard let url = URL(string: "http://127.0.0.1:\(port)/json") else { return (false, nil, "URL error") }
         let semaphore = DispatchSemaphore(value: 0)
         var wsUrlStr: String? = nil
         
@@ -1465,33 +1468,18 @@ class ServerManager: @unchecked Sendable {
             guard let data = data,
                   let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
                   let firstTarget = jsonArray.first(where: { ($0["type"] as? String) == "page" }),
-                  let wsUrl = firstTarget["webSocketDebuggerUrl"] as? String else {
-                return
-            }
+                  let wsUrl = firstTarget["webSocketDebuggerUrl"] as? String else { return }
             wsUrlStr = wsUrl
         }.resume()
         
         _ = semaphore.wait(timeout: .now() + 5.0)
-        
         guard let wsUrlString = wsUrlStr, let wsUrl = URL(string: wsUrlString) else {
-            return jsonResponse(["error": "Cannot get WebSocket URL"], statusCode: 500)
+            return (false, nil, "Cannot get WebSocket URL")
         }
         
-        // 2. Connect WebSocket and send JS
-        let msg: [String: Any] = [
-            "id": 1,
-            "method": "Runtime.evaluate",
-            "params": [
-                "expression": script,
-                "awaitPromise": true,
-                "returnByValue": true
-            ]
-        ]
-        
+        let msg: [String: Any] = ["id": 1, "method": "Runtime.evaluate", "params": ["expression": script, "awaitPromise": true, "returnByValue": true]]
         guard let msgData = try? JSONSerialization.data(withJSONObject: msg),
-              let msgStr = String(data: msgData, encoding: .utf8) else {
-            return .internalServerError
-        }
+              let msgStr = String(data: msgData, encoding: .utf8) else { return (false, nil, "JSON error") }
         
         let wsTask = URLSession.shared.webSocketTask(with: wsUrl)
         wsTask.resume()
@@ -1507,7 +1495,6 @@ class ServerManager: @unchecked Sendable {
                     if case .string(let text) = message,
                        let data = text.data(using: .utf8),
                        let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        
                         if let id = jsonResponse["id"] as? Int, id == 1 {
                             if let error = jsonResponse["error"] as? [String: Any] {
                                 errorResult = error["message"] as? String ?? "Unknown error"
@@ -1539,13 +1526,56 @@ class ServerManager: @unchecked Sendable {
             receiveLoop()
         }
         
-        _ = wsSemaphore.wait(timeout: .now() + 10.0) // wait up to 10 seconds
+        _ = wsSemaphore.wait(timeout: .now() + 10.0)
         wsTask.cancel(with: .normalClosure, reason: nil)
         
         if let error = errorResult {
-            return jsonResponse(["error": error], statusCode: 500)
+            return (false, nil, error)
+        }
+        return (true, scriptResult, nil)
+    }
+    
+    func getCyberMediaHandler(appId: String, command: String) -> String? {
+        return self.cyberMediaHandlers[appId]?[command]
+    }
+    
+    func evaluateCyberMediaCommand(appId: String, command: String) -> Bool {
+        guard let s = getCyberMediaHandler(appId: appId, command: command) else { return false }
+        let (success, _, _) = evaluateCyberScript(appId: appId, script: s)
+        return success
+    }
+
+    
+    private func handleCyberMediaHandlers(_ request: HttpRequest) -> HttpResponse {
+        guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
+        let bodyData = Data(request.body)
+        guard let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
+              let appId = json["appId"] as? String,
+              let handlers = json["handlers"] as? [String: String] else {
+            return jsonResponse(["error": "Missing payload"], statusCode: 400)
+        }
+        DispatchQueue.main.async {
+            self.cyberMediaHandlers[appId] = handlers
+            print("✅ [ServerManager] Registered media handlers for \(appId)")
+        }
+        return jsonResponse(["success": true])
+    }
+
+    private func handleCyberEvaluate(_ request: HttpRequest) -> HttpResponse {
+        guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
+        let bodyData = Data(request.body)
+        guard let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
+              let appId = json["appId"] as? String,
+              let script = json["script"] as? String else {
+            return jsonResponse(["error": "Missing appId or script in JSON body"], statusCode: 400)
         }
         
-        return jsonResponse(["success": true, "result": scriptResult ?? NSNull()])
+        let (success, result, error) = evaluateCyberScript(appId: appId, script: script)
+        if success {
+            return jsonResponse(["success": true, "result": result ?? NSNull()])
+        } else {
+            return jsonResponse(["error": error ?? "Unknown error"], statusCode: 500)
+        }
     }
+
 }

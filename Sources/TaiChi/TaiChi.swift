@@ -191,6 +191,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         ServerManager.shared.start()
         Task { await WallpaperManager.shared.startEngine() }
         IslandManager.shared.setup()
+        _ = DiskMonitorManager.shared
         AudioKeepAliveManager.shared.setEnabled(TaiChiSettings.shared.isAudioKeepAliveEnabled)
         
         let contentView = TaiChiOverlayView(config: config)
@@ -344,6 +345,16 @@ struct TaiChiOverlayView: View {
     @State private var monitoredAppsMode: MonitoredAppsMode = .windows
     let maxVisibleApps = 7
     
+    @AppStorage("lastClickedAppBundleID") private var lastClickedAppBundleID: String = ""
+    
+    var lastAppWithWindow: CombinedApp? {
+        guard !lastClickedAppBundleID.isEmpty else { return nil }
+        return combinedApps.first(where: { app in
+            let bId = app.residentApp?.id ?? app.runningApp?.bundleIdentifier ?? ""
+            return bId == lastClickedAppBundleID && app.windowState != .windowless && app.windowState != .notRunning
+        })
+    }
+    
     var orbitalRadius: CGFloat { config.hubSize / 2 + 35 }
     var orbSinkOffset: CGFloat { config.hubSize * 0.25 }
     
@@ -430,7 +441,9 @@ struct TaiChiOverlayView: View {
                 // 将设置按钮刚好卡在屏幕物理底边（呈现被切掉一半的高级隐藏效果）。
                 // config.hubSize / 2 代表面板的最底边，而 orbSinkOffset 是面板下沉的距离。
                 // 两者相减即为刚好贴着屏幕下边缘的位置。
-                SettingsButton()
+                SettingsButton(lastApp: lastAppWithWindow, onOpenApp: { app in
+                    handleAppTap(app)
+                })
                     .offset(y: config.hubSize / 2 - orbSinkOffset)
                 
                 if activeView == .defaultApps {
@@ -553,6 +566,11 @@ struct TaiChiOverlayView: View {
     }
     
     private func handleAppTap(_ app: CombinedApp) {
+        let bundleID = app.residentApp?.id ?? app.runningApp?.bundleIdentifier
+        if let bundleID = bundleID {
+            lastClickedAppBundleID = bundleID
+        }
+        
         if let runningApp = app.runningApp {
             if app.windowState == .windowless, let url = runningApp.bundleURL {
                 let config = NSWorkspace.OpenConfiguration()

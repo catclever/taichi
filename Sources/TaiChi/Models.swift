@@ -28,6 +28,18 @@ struct FloatingApp: Identifiable, Codable, Equatable {
     var path: String
 }
 
+struct MediaApp: Identifiable, Codable, Equatable {
+    var id: String // Bundle Identifier
+    var name: String
+    var path: String
+    var supportsLyrics: Bool?
+    
+    var isLyricSupported: Bool {
+        get { supportsLyrics ?? false }
+        set { supportsLyrics = newValue }
+    }
+}
+
 struct ScreenInfo: Identifiable, Codable, Equatable {
     var id: String { uuid }
     var uuid: String
@@ -97,6 +109,10 @@ class TaiChiSettings: ObservableObject {
     
     @Published var monitoredApps: [MonitoredApp] = [] {
         didSet { saveMonitoredApps() }
+    }
+    
+    @Published var mediaApps: [MediaApp] = [] {
+        didSet { saveMediaApps() }
     }
     
     @Published var floatingApps: [FloatingApp] = [] {
@@ -209,15 +225,33 @@ class TaiChiSettings: ObservableObject {
         loadWallpaperEngineConfig()
         isInitializing = false
     }
+    private func decodeDict<T: Decodable>(_ dict: [String: Any], as type: T.Type) -> T? {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: []) else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
     
     func loadWallpaperEngineConfig() {
         let basePath = (scriptsPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: (basePath as NSString).appendingPathComponent("wallpaper.json"))
         if let data = try? Data(contentsOf: url),
-           let config = try? JSONDecoder().decode(WallpaperEngineConfig.self, from: data) {
-            self.wallpaperEngineConfig = config
-            if let enabled = config.isEngineEnabled {
-                self.isWallpaperEngineEnabled = enabled
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            
+            if let arr = json["residentApps"] as? [[String: Any]] {
+                self.residentApps = arr.compactMap { decodeDict($0, as: ResidentApp.self) }
+            }
+            if let arr = json["monitoredApps"] as? [[String: Any]] {
+                self.monitoredApps = arr.compactMap { decodeDict($0, as: MonitoredApp.self) }
+            }
+            if let arr = json["mediaApps"] as? [[String: Any]] {
+                self.mediaApps = arr.compactMap { decodeDict($0, as: MediaApp.self) }
+            }
+            
+            if let configData = try? JSONSerialization.data(withJSONObject: json),
+               let config = try? JSONDecoder().decode(WallpaperEngineConfig.self, from: configData) {
+                self.wallpaperEngineConfig = config
+                if let enabled = config.isEngineEnabled {
+                    self.isWallpaperEngineEnabled = enabled
+                }
             }
         } else {
             // Default config
@@ -262,6 +296,11 @@ class TaiChiSettings: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: "floatingApps"),
            let apps = try? JSONDecoder().decode([FloatingApp].self, from: data) {
             floatingApps = apps
+        }
+        
+        if let data = UserDefaults.standard.data(forKey: "mediaApps"),
+           let apps = try? JSONDecoder().decode([MediaApp].self, from: data) {
+            mediaApps = apps
         }
         
         if let data = UserDefaults.standard.data(forKey: "commonPaths"),
@@ -357,11 +396,18 @@ class TaiChiSettings: ObservableObject {
             UserDefaults.standard.set(data, forKey: "residentApps")
         }
     }
-    
+
     private func saveMonitoredApps() {
         guard !isInitializing else { return }
         if let data = try? JSONEncoder().encode(monitoredApps) {
             UserDefaults.standard.set(data, forKey: "monitoredApps")
+        }
+    }
+    
+    private func saveMediaApps() {
+        guard !isInitializing else { return }
+        if let data = try? JSONEncoder().encode(mediaApps) {
+            UserDefaults.standard.set(data, forKey: "mediaApps")
         }
     }
     

@@ -122,12 +122,61 @@ struct OrbitalAppIcon: View {
 }
 
 struct SettingsButton: View {
+    var lastApp: CombinedApp?
+    var onOpenApp: ((CombinedApp) -> Void)?
+    
     @State private var isHovered = false
+    @State private var showTaiChi = false
+    @State private var hoverTimer: Timer?
+    @State private var lastClickTime = Date.distantPast
+    @State private var clickTask: Task<Void, Never>?
+    
+    var shouldShowApp: Bool {
+        return lastApp != nil && !showTaiChi
+    }
     
     var body: some View {
         Button(action: {
-            SettingsWindowManager.shared.show()
-            NotificationCenter.default.post(name: NSNotification.Name("hideTaiChi"), object: nil)
+            let now = Date()
+            let isDoubleClick = now.timeIntervalSince(lastClickTime) < 0.3
+            
+            if isDoubleClick {
+                clickTask?.cancel()
+                if shouldShowApp {
+                    // Icon = App -> Double = Settings
+                    openSettings()
+                } else {
+                    // Icon = TaiChi -> Double = App (if available)
+                    if let app = lastApp {
+                        onOpenApp?(app)
+                    } else {
+                        openSettings()
+                    }
+                }
+            } else {
+                // Single click
+                if lastApp == nil {
+                    // No app available, single click is settings instantly (no need to wait for double click)
+                    openSettings()
+                } else {
+                    // There IS a lastApp, so double click does something different. We MUST wait to differentiate.
+                    clickTask = Task {
+                        try? await Task.sleep(nanoseconds: 300_000_000)
+                        if !Task.isCancelled {
+                            if shouldShowApp {
+                                // Icon = App -> Single = App
+                                if let app = lastApp {
+                                    onOpenApp?(app)
+                                }
+                            } else {
+                                // Icon = TaiChi -> Single = Settings
+                                openSettings()
+                            }
+                        }
+                    }
+                }
+            }
+            lastClickTime = now
         }) {
             ZStack {
                 Circle()
@@ -137,16 +186,42 @@ struct SettingsButton: View {
                     Circle().stroke(Color.white.opacity(isHovered ? 0.3 : 0.12), lineWidth: 1)
                 )
                 
-                YinYangIcon()
-                    .frame(width: 20, height: 20)
-                    .rotationEffect(.degrees(isHovered ? 180 : 0))
-                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHovered)
+                if shouldShowApp, let app = lastApp {
+                    Image(nsImage: app.runningApp?.icon ?? NSWorkspace.shared.icon(forFile: app.residentApp?.path ?? ""))
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 20, height: 20)
+                } else {
+                    YinYangIcon()
+                        .frame(width: 20, height: 20)
+                        .rotationEffect(.degrees(isHovered ? 180 : 0))
+                        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHovered)
+                }
             }
             .scaleEffect(isHovered ? 1.1 : 1.0)
             .contentShape(Circle())
-            .onHover { isHovered = $0 }
+            .onHover { hovering in
+                isHovered = hovering
+                hoverTimer?.invalidate()
+                if hovering && shouldShowApp {
+                    hoverTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { _ in
+                        Task { @MainActor in
+                            withAnimation {
+                                self.showTaiChi = true
+                            }
+                        }
+                    }
+                } else if !hovering {
+                    showTaiChi = false
+                }
+            }
         }
         .buttonStyle(.plain)
+    }
+    
+    private func openSettings() {
+        SettingsWindowManager.shared.show()
+        NotificationCenter.default.post(name: NSNotification.Name("hideTaiChi"), object: nil)
     }
 }
 

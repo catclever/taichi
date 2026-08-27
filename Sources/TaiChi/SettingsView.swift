@@ -117,7 +117,6 @@ struct BasicFeaturesTab: View {
                     .onMove { settings.monitoredApps.move(fromOffsets: $0, toOffset: $1) }
                 }
             }
-            
             // 常用路径
             Section(header: HStack {
                 Text("常用路径").font(.headline)
@@ -143,6 +142,33 @@ struct BasicFeaturesTab: View {
                     }
                     .onDelete { settings.commonPaths.remove(atOffsets: $0) }
                     .onMove { settings.commonPaths.move(fromOffsets: $0, toOffset: $1) }
+                }
+            }
+            
+            // 媒体控制 (Media Apps)
+            Section(header: HStack {
+                Text("媒体控制 (Media Apps)").font(.headline)
+                Spacer()
+                Button(action: { 
+                    addApp { id, name, path in 
+                        if !settings.mediaApps.contains(where: { $0.id == id }) {
+                            settings.mediaApps.append(MediaApp(id: id, name: name, path: path)) 
+                        }
+                    } 
+                }) {
+                    Image(systemName: "plus")
+                }.buttonStyle(.borderless)
+            }) {
+                if settings.mediaApps.isEmpty {
+                    Text("暂无配置").foregroundColor(.secondary).italic()
+                } else {
+                    ForEach($settings.mediaApps) { $app in
+                        MediaAppRow(app: $app) {
+                            settings.mediaApps.removeAll { $0.id == app.id }
+                        }
+                    }
+                    .onDelete { settings.mediaApps.remove(atOffsets: $0) }
+                    .onMove { settings.mediaApps.move(fromOffsets: $0, toOffset: $1) }
                 }
             }
         }
@@ -175,6 +201,31 @@ struct AppRow: View {
             Button(action: onDelete) { Image(systemName: "trash") }.buttonStyle(.plain).foregroundColor(.red)
         }
         .contentShape(Rectangle())
+    }
+}
+
+struct MediaAppRow: View {
+    @Binding var app: MediaApp
+    var onDelete: () -> Void
+    var body: some View {
+        HStack {
+            Image(systemName: "line.3.horizontal").foregroundColor(.gray)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(app.name)
+                Text(app.path).font(.caption2).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer()
+            Toggle(isOn: $app.isLyricSupported) {
+                Text("支持歌词").font(.caption)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .fixedSize()
+            .padding(.horizontal, 4)
+            Button(action: onDelete) { Image(systemName: "trash") }.buttonStyle(.plain).foregroundColor(.red)
+        }
+        .contentShape(Rectangle())
+        .padding(.vertical, 2)
     }
 }
 

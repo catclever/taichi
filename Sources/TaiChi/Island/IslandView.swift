@@ -14,6 +14,29 @@ struct IslandView: View {
     @State private var timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
     @State private var localElapsedTime: Double = 0.0
     
+    private var shouldShowLyrics: Bool {
+        guard mediaObserver.state.isPlaying else { return false }
+        
+        let mediaApps = TaiChiSettings.shared.mediaApps
+        let hasLyricApps = mediaApps.contains(where: { $0.isLyricSupported })
+        
+        if hasLyricApps {
+            if let currentApp = mediaApps.first(where: { $0.id == mediaObserver.state.bundleIdentifier }) {
+                if !currentApp.isLyricSupported {
+                    return false
+                }
+            } else {
+                return false
+            }
+        }
+        
+        // If it's a known non-music type (like Video), hide it
+        if let type = mediaObserver.state.mediaType, type == "Video" {
+            return false
+        }
+        return true
+    }
+    
     var body: some View {
         ZStack {
             // Base Background (The Notch)
@@ -24,14 +47,14 @@ struct IslandView: View {
             // Content
             Group {
                 switch stateModel.state {
-                case .idle:
-                    if stateModel.isLyricPinned {
+                case .idle, .multiAppList:
+                    if stateModel.isLyricPinned && !stateModel.isLyricDetached && shouldShowLyrics {
                         lyricPinnedContent
                     } else {
                         idleContent
                     }
                 case .trackChanged:
-                    if stateModel.isLyricPinned {
+                    if stateModel.isLyricPinned && !stateModel.isLyricDetached && shouldShowLyrics {
                         lyricPinnedContent
                     } else {
                         trackChangedContent
@@ -55,13 +78,6 @@ struct IslandView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.state)
         .onChange(of: stateModel.isHovering) { isHovering in
             handleHover(isHovering)
-        }
-        .onTapGesture {
-            if !mediaObserver.state.isPlaying && stateModel.state != .expanded {
-                withAnimation {
-                    stateModel.state = .expanded
-                }
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top) // Fill the hosting view to position notch
         .onChange(of: mediaObserver.state.title) { _ in
@@ -96,12 +112,6 @@ struct IslandView: View {
     
     private func updateStateDimensions() {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0)) {
-            if !mediaObserver.state.isPlaying && stateModel.state != .expanded {
-                stateModel.capsuleWidth = baseNotchWidth
-                stateModel.capsuleHeight = baseNotchHeight
-                return
-            }
-            
             if mediaObserver.state.title.isEmpty {
                 stateModel.capsuleWidth = baseNotchWidth
                 stateModel.capsuleHeight = baseNotchHeight
@@ -110,16 +120,16 @@ struct IslandView: View {
             
             switch stateModel.state {
             case .idle:
-                if stateModel.isLyricPinned {
-                    stateModel.capsuleWidth = baseNotchWidth + (200 * notchScale)
+                if stateModel.isLyricPinned && !stateModel.isLyricDetached && shouldShowLyrics {
+                    stateModel.capsuleWidth = hasPhysicalNotch ? (baseNotchWidth + 80) : (baseNotchWidth + (200 * notchScale))
                     stateModel.capsuleHeight = hasPhysicalNotch ? baseNotchHeight + (26 * notchScale) : baseNotchHeight
                 } else {
                     stateModel.capsuleWidth = baseNotchWidth + 80
                     stateModel.capsuleHeight = baseNotchHeight
                 }
             case .trackChanged:
-                if stateModel.isLyricPinned {
-                    stateModel.capsuleWidth = baseNotchWidth + (200 * notchScale)
+                if stateModel.isLyricPinned && !stateModel.isLyricDetached && shouldShowLyrics {
+                    stateModel.capsuleWidth = hasPhysicalNotch ? (baseNotchWidth + (100 * notchScale)) : (baseNotchWidth + (200 * notchScale))
                 } else {
                     stateModel.capsuleWidth = baseNotchWidth + (100 * notchScale)
                 }
@@ -127,6 +137,9 @@ struct IslandView: View {
             case .expanded:
                 stateModel.capsuleWidth = 380
                 stateModel.capsuleHeight = 160
+            case .multiAppList:
+                stateModel.capsuleWidth = baseNotchWidth + 80
+                stateModel.capsuleHeight = baseNotchHeight
             }
         }
     }
@@ -178,44 +191,91 @@ struct IslandView: View {
                 if let img = currentArtwork {
                     SpinningRecord(image: img, isPlaying: mediaObserver.state.isPlaying)
                         .frame(width: 26 * notchScale, height: 26 * notchScale) // Increased from 20
+                        .contentShape(Rectangle())
                         .padding(.leading, 12 * notchScale)
+                        .onTapGesture {
+                            if stateModel.state == .expanded { return }
+                            if stateModel.state == .multiAppList {
+                                withAnimation {
+                                    stateModel.state = .idle
+                                }
+                                return
+                            }
+                            
+                            let bundleId = mediaObserver.state.bundleIdentifier
+                            if !bundleId.isEmpty {
+                                mediaObserver.toggleApp(bundleId: bundleId)
+                            }
+                        }
                 }
                 
-                if !hasPhysicalNotch && stateModel.isLyricPinned {
+                if !hasPhysicalNotch && stateModel.isLyricPinned && !stateModel.isLyricDetached {
                     lyricAndPlayButtonView
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { cycleLyricScreen() }
                 } else {
                     Spacer() // Center is the physical notch
                 }
                 
-                // Right: Waveform and App Icon (Clickable for Play/Pause)
-                Button(action: { mediaObserver.sendTargetedCommand(2) }) {
-                    ZStack {
-                        // App Icon (highly transparent)
-                        if let appIcon = getAppIcon(bundleId: mediaObserver.state.bundleIdentifier) {
-                            Image(nsImage: appIcon)
-                                .resizable()
-                                .frame(width: 26 * notchScale, height: 26 * notchScale) // Increased from 20
-                                .opacity(0.3)
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                                .id(mediaObserver.state.bundleIdentifier)
+                // Right: Waveform and App Icon
+                ZStack {
+                    // App Icon (highly transparent)
+                    if let appIcon = getAppIcon(bundleId: mediaObserver.state.bundleIdentifier) {
+                        Image(nsImage: appIcon)
+                            .resizable()
+                            .frame(width: 26 * notchScale, height: 26 * notchScale) // Increased from 20
+                            .opacity(0.3)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            .id(mediaObserver.state.bundleIdentifier)
+                    }
+                    
+                    // Waveform (hidden or static when paused)
+                    WaveformView(color: waveformColor, notchScale: notchScale, isPlaying: mediaObserver.state.isPlaying)
+                        .frame(width: 30 * notchScale, height: 16 * notchScale)
+                }
+                .frame(width: 30 * notchScale, height: 26 * notchScale)
+                .contentShape(Rectangle())
+                .padding(.trailing, 12 * notchScale)
+                .onTapGesture(count: 2) {
+                    let bundleId = mediaObserver.state.bundleIdentifier
+                    if !bundleId.isEmpty, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                        let config = NSWorkspace.OpenConfiguration()
+                        NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+                    }
+                }
+                .onTapGesture {
+                    if stateModel.state == .expanded { return }
+                    if stateModel.state == .multiAppList {
+                        withAnimation {
+                            stateModel.state = .idle
                         }
-                        
-                        // Waveform (hidden or static when paused)
-                        if mediaObserver.state.isPlaying {
-                            WaveformView(color: waveformColor, notchScale: notchScale)
-                                .frame(width: 30 * notchScale, height: 16 * notchScale)
-                        } else {
-                            // Show static waveform or play icon when paused
-                            Image(systemName: "play.fill")
-                                .font(.system(size: 14 * notchScale))
-                                .foregroundColor(waveformColor)
+                        return
+                    }
+                    
+                    let activeCount = mediaObserver.activeMediaApps.filter { app in
+                        if app.playStateString == "playing" || app.playStateString == "paused" { return true }
+                        if app.bundleIdentifier == mediaObserver.state.bundleIdentifier && (!mediaObserver.state.title.isEmpty || mediaObserver.state.isPlaying) { return true }
+                        return false
+                    }.count
+                    
+                    if activeCount > 1 {
+                        withAnimation {
+                            stateModel.state = .multiAppList
+                        }
+                    } else if activeCount == 1 {
+                        let currentApp = mediaObserver.activeMediaApps.first(where: { app in 
+                            app.playStateString == "playing" || app.playStateString == "paused" || 
+                            (app.bundleIdentifier == mediaObserver.state.bundleIdentifier && (!mediaObserver.state.title.isEmpty || mediaObserver.state.isPlaying))
+                        })
+                        if let bundleId = currentApp?.bundleIdentifier {
+                            mediaObserver.toggleApp(bundleId: bundleId)
+                        }
+                    } else if !mediaObserver.state.isPlaying && stateModel.state != .expanded {
+                        withAnimation {
+                            stateModel.state = .expanded
                         }
                     }
-                    .frame(width: 30 * notchScale, height: 26 * notchScale)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(PlainButtonStyle())
-                .padding(.trailing, 12 * notchScale)
             } else {
                 // Not playing and no track: just empty spacer to keep the notch shape
                 Spacer()
@@ -239,16 +299,6 @@ struct IslandView: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                
-                Button(action: { mediaObserver.sendTargetedCommand(2) }) { // Play/Pause
-                    Image(systemName: mediaObserver.state.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 13 * notchScale))
-                        .foregroundColor(.white)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-                .padding(.leading, 8 * notchScale)
-
                 Spacer()
             }
             .frame(height: 26 * notchScale) // Fill the added vertical space
@@ -265,31 +315,20 @@ struct IslandView: View {
             let currentIndex = lyrics.lastIndex(where: { $0.time <= localElapsedTime + 0.5 }) ?? 0
             
             if lyrics.isEmpty {
-                Text("\(mediaObserver.state.title) - \(mediaObserver.state.artist)")
-                    .font(.system(size: 13 * notchScale, weight: .medium))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                MarqueeText(
+                    text: "\(mediaObserver.state.title) - \(mediaObserver.state.artist)",
+                    font: .system(size: 13 * notchScale, weight: .medium),
+                    foregroundColor: .white,
+                    velocity: 30.0
+                )
             } else {
-                Text(lyrics[currentIndex].text)
-                    .font(.system(size: 13 * notchScale, weight: .bold))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                MarqueeText(
+                    text: lyrics[currentIndex].text,
+                    font: .system(size: 13 * notchScale, weight: .bold),
+                    foregroundColor: .white,
+                    velocity: 30.0
+                )
             }
-            
-            // Show the play/pause button only if hovered and there IS a physical notch
-            if stateModel.state == .trackChanged && hasPhysicalNotch {
-                Button(action: { mediaObserver.sendTargetedCommand(2) }) {
-                    Image(systemName: mediaObserver.state.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 13 * notchScale))
-                        .foregroundColor(.white)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-                .padding(.leading, 8 * notchScale)
-            }
-            
             Spacer()
         }
     }
@@ -302,9 +341,25 @@ struct IslandView: View {
                 lyricAndPlayButtonView
                     .frame(height: 26 * notchScale)
                     .padding(.horizontal, 20 * notchScale)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        cycleLyricScreen()
+                    }
             }
         }
         .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
+    }
+    
+    private func cycleLyricScreen() {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return }
+        let nextIndex = ((stateModel.lyricScreenIndex ?? stateModel.activeScreenIndex) + 1) % screens.count
+        
+        if nextIndex == stateModel.activeScreenIndex {
+            stateModel.lyricScreenIndex = nil // Merge back
+        } else {
+            stateModel.lyricScreenIndex = nextIndex
+        }
     }
     
     // MARK: - Logic
@@ -312,8 +367,9 @@ struct IslandView: View {
     private func handleHover(_ isHovering: Bool) {
         hoverTimer?.invalidate()
         if isHovering {
-            guard !mediaObserver.state.title.isEmpty else { return } // Only expand if there's a song
-            guard mediaObserver.state.isPlaying else { return } // Do not expand on hover when paused
+            // We want it to expand if there's any active app
+            let hasActiveApps = !mediaObserver.activeMediaApps.isEmpty
+            guard hasActiveApps else { return }
             
             hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
                 Task { @MainActor in
@@ -326,8 +382,11 @@ struct IslandView: View {
                     // Schedule expansion after another 1.0s
                     self.hoverTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
                         Task { @MainActor in
-                            withAnimation {
-                                self.stateModel.state = .expanded
+                            // Only expand if we are in trackChanged or idle (don't override multiAppList)
+                            if self.stateModel.state == .trackChanged || self.stateModel.state == .idle {
+                                withAnimation {
+                                    self.stateModel.state = .expanded
+                                }
                             }
                         }
                     }
@@ -455,6 +514,7 @@ struct SpinningRecord: View {
 struct WaveformView: View {
     var color: Color
     var notchScale: CGFloat = 1.0
+    var isPlaying: Bool = true
     @State private var isAnimating = false
     
     var body: some View {
@@ -462,12 +522,15 @@ struct WaveformView: View {
             ForEach(0..<4) { i in
                 Capsule()
                     .fill(color)
-                    .frame(width: 3 * notchScale, height: isAnimating ? CGFloat.random(in: 5...20) * notchScale : 5 * notchScale)
-                    .animation(.easeInOut(duration: 0.3).repeatForever().delay(Double(i) * 0.1), value: isAnimating)
+                    .frame(width: 3 * notchScale, height: (isAnimating && isPlaying) ? CGFloat.random(in: 5...20) * notchScale : 5 * notchScale)
+                    .animation(isPlaying ? .easeInOut(duration: 0.3).repeatForever().delay(Double(i) * 0.1) : .default, value: isAnimating && isPlaying)
             }
         }
         .onAppear {
             isAnimating = true
+        }
+        .onChange(of: isPlaying) { playing in
+            isAnimating = playing
         }
     }
 }

@@ -140,3 +140,39 @@ We have built a dedicated API backend for Alfred, allowing you to control any Ch
      curl -s "http://127.0.0.1:9216/api/launcher/action?payload={query}"
      ```
 6. Done! Fire up Alfred, type `cyber chrome` and enjoy your pure cyberpunk workflow.
+
+---
+
+## 📋 完整功能清单 (Comprehensive Feature List)
+
+太极 (TaiChi) 致力于将 macOS 的交互推向极致，以下是目前支持的所有核心功能板块：
+
+### 🚀 一、基础启动与应用管理 (App Launcher & Manager)
+作为一款现代化的快捷启动器，太极提供了强大的基础管理功能。
+- **可视化应用抽屉**：直观展示系统中所有已安装和正在运行的应用状态。
+- **快速拉起与状态监控**：一键管理应用的启动、强杀与状态监控，彻底替代 macOS 传统的 Dock。
+
+### 💉 二、Cyber 注入系统 (CDP Remote Injection)
+太极的核心魔法，用于深度控制和操控基于 Chromium / Electron 架构的应用程序。
+- **动态拉起与脚本执行**：通过本地 HTTP 接口 (`/api/cyber/evaluate`)，利用 WebSocket (CDP) 向目标页面跨域注入并执行自定义 JavaScript 脚本。
+- **全局雷达搜索**：深度集成 Alfred 工作流，全局扫描并毫秒级拉起应用的调试模式 (Remote Debugging Port)。
+- **🕵️‍♀️ 寻星镜 (DOM Inspector)**：像浏览器开发者工具一样，在应用内可视化选取 DOM 元素。支持滚轮/方向键切换 DOM 层级，双击直接锁定目标并复制 Selector。
+- **快捷重注入 (Re-inject)**：为避免快捷键冲突，直接在目标窗口悬浮的闪电图标上右键（或双指轻按），即可唤出菜单快速重新注入配置的脚本。
+
+### 🏝️ 三、灵动岛与视觉交互 (Dynamic Island & UI)
+超越硬件限制，为所有 Mac 带来优雅的交互式顶栏体验。
+- **自适应状态全息屏**：完美适配有/无刘海屏幕，播放音乐时自动下沉展示专辑封面与音频波形。
+- **多模式与状态栏歌词**：支持多种显示模式的无缝切换。特别新增“菜单栏歌词模式”，在顶部空间局促时也能优雅地显示滚动歌词。
+- **悬浮控制面板**：鼠标悬停即可展开详细的控制台。支持将其固定在屏幕顶端，且自动进入“点击穿透”模式，不影响底层应用的正常操作。
+
+### 🪟 四、全局视窗与系统自动化 (Hammerspoon & Automation)
+通过与 Hammerspoon 的深度通信，将对系统窗口与视觉的控制力提升到新高度。
+- **全局悬浮应用管理**：支持一键将特定应用窗口设为“置顶悬浮”状态，并提供快捷操作，可以瞬间全局隐藏或显示所有被太极置顶的窗口。
+- **沉浸式壁纸调度**：支持通过 Hammerspoon 联动自动切换或调度系统壁纸，打造沉浸式的桌面环境体验。
+- **自动化 Lua 部署**：启动太极时，底层自动向 `~/.hammerspoon` 生成并同步 `taichi_env.lua` 脚本，双向通信免去繁琐配置。
+
+### 💽 五、系统资源与外设监控 (System & Disk Monitor)
+时刻掌握你的数字资产与系统状态。
+- **磁盘监控面板**：实时监控本地系统磁盘，并完美支持外部挂载盘（如网络盘或 Rclone）的容量与状态显示。
+- **一键快捷挂载**：在灵动岛下拉面板中，直接一键执行外部磁盘或 Rclone 目录的挂载/卸载操作。
+

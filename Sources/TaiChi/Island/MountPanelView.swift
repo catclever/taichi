@@ -5,6 +5,9 @@ struct MountPanelView: View {
     
     var body: some View {
         VStack(spacing: 8) {
+            if (NSScreen.main?.safeAreaInsets.top ?? 0) > 0 {
+                Spacer().frame(height: 32)
+            }
             Text("Mount Status")
                 .font(.system(size: 14, weight: .bold))
                 .foregroundColor(.white)
@@ -49,7 +52,7 @@ struct MountPanelView: View {
                                             diskMonitor.connect(id: target.id)
                                         }
                                     }) {
-                                        Text(target.state == .connected ? "Disconnect" : "Connect")
+                                        Text(target.state == .connected ? "Unmount" : "Mount")
                                             .font(.system(size: 10, weight: .bold))
                                             .padding(.horizontal, 8)
                                             .padding(.vertical, 4)

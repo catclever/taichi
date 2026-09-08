@@ -417,7 +417,8 @@ struct SystemSettingsTab: View {
     @ObservedObject var permissions = PermissionsManager.shared
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
             Text("系统配置")
                 .font(.headline)
             
@@ -450,6 +451,22 @@ struct SystemSettingsTab: View {
                         TextField("路径", text: $settings.hsConfigPath)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                     }
+                }
+                .padding()
+            }
+            
+            GroupBox(label: Text("网络硬盘监控")) {
+                DiskMonitorTab()
+            }
+            
+            
+            GroupBox(label: Text("菜单栏歌词 (MenuBar Lyrics)")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("开启菜单栏滚动歌词", isOn: $settings.showMenuBarLyrics)
+                    Text("在系统顶部菜单栏实时滚动显示当前播放的歌词。点击歌词可展开极简播控面板。")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding()
             }
@@ -499,6 +516,7 @@ struct SystemSettingsTab: View {
             Spacer()
         }
         .padding()
+        }
     }
 }
 

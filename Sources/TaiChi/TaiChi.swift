@@ -191,6 +191,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         ServerManager.shared.start()
         Task { await WallpaperManager.shared.startEngine() }
         IslandManager.shared.setup()
+        _ = MenuBarLyricManager.shared
         _ = DiskMonitorManager.shared
         AudioKeepAliveManager.shared.setEnabled(TaiChiSettings.shared.isAudioKeepAliveEnabled)
         

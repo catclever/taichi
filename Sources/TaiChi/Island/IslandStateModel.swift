@@ -2,11 +2,18 @@ import Foundation
 import Combine
 import SwiftUI
 
+enum IslandMode: String, Equatable {
+    case media
+    case disk
+}
+
 enum IslandState: Equatable {
     case idle
     case trackChanged
     case expanded
     case multiAppList
+    case modeSwitcher
+    case notification
 }
 
 @MainActor
@@ -14,6 +21,25 @@ class IslandStateModel: ObservableObject {
     static let shared = IslandStateModel()
     
     @Published var state: IslandState = .idle
+    @Published var currentMode: IslandMode = .media
+    @Published var notificationText: String?
+    
+    func showNotification(text: String, mode: IslandMode) {
+        self.notificationText = text
+        self.currentMode = mode
+        self.state = .notification
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            if self.state == .notification && self.notificationText == text {
+                if !self.isHovering {
+                    withAnimation {
+                        self.state = .idle
+                        self.notificationText = nil
+                    }
+                }
+            }
+        }
+    }
     @Published var capsuleWidth: CGFloat = 160
     @Published var capsuleHeight: CGFloat = 36
     @Published var isHovering: Bool = false

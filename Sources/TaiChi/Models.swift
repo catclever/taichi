@@ -2,6 +2,12 @@ import Cocoa
 import SwiftUI
 import Combine
 
+struct SMBMountConfig: Identifiable, Codable, Equatable {
+    var id: String
+    var remotePath: String
+    var localPath: String
+}
+
 // 数据模型
 
 struct ResidentApp: Identifiable, Codable, Equatable {
@@ -102,6 +108,16 @@ class TaiChiSettings: ObservableObject {
     static let shared = TaiChiSettings()
     
     private var isInitializing = true
+    
+    
+    @Published var showMenuBarLyrics: Bool = UserDefaults.standard.bool(forKey: "showMenuBarLyrics") {
+        didSet {
+            UserDefaults.standard.set(showMenuBarLyrics, forKey: "showMenuBarLyrics")
+        }
+    }
+@Published var activeSMBMounts: [SMBMountConfig] = [] {
+        didSet { saveActiveSMBMounts() }
+    }
     
     @Published var residentApps: [ResidentApp] = [] {
         didSet { saveResidentApps() }
@@ -390,6 +406,20 @@ class TaiChiSettings: ObservableObject {
         isTelescopeEnabled = telescopeEnabled
     }
     
+    private func saveActiveSMBMounts() {
+        guard !isInitializing else { return }
+        if let data = try? JSONEncoder().encode(activeSMBMounts) {
+            UserDefaults.standard.set(data, forKey: "activeSMBMounts")
+        }
+    }
+    
+    private func loadActiveSMBMounts() {
+        if let data = UserDefaults.standard.data(forKey: "activeSMBMounts"),
+           let items = try? JSONDecoder().decode([SMBMountConfig].self, from: data) {
+            activeSMBMounts = items
+        }
+    }
+
     private func saveResidentApps() {
         guard !isInitializing else { return }
         if let data = try? JSONEncoder().encode(residentApps) {

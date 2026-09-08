@@ -39,12 +39,32 @@ public class IslandManager: NSObject, NSWindowDelegate {
     
     private func handleOutsideClick(event: NSEvent) {
         let stateModel = IslandStateModel.shared
-        guard stateModel.state == .multiAppList else { return }
-        
         let location = NSEvent.mouseLocation
         
         let inMultiApp = multiAppListWindow?.frame.contains(location) ?? false
         let inMain = window?.frame.contains(location) ?? false
+        
+        if event.type == .rightMouseDown && inMain {
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    stateModel.state = .modeSwitcher
+                }
+            }
+            return
+        }
+        
+        if stateModel.state == .modeSwitcher {
+            if !inMain {
+                DispatchQueue.main.async {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        stateModel.state = .idle
+                    }
+                }
+            }
+            return
+        }
+        
+        guard stateModel.state == .multiAppList else { return }
         
         if !inMultiApp && !inMain {
             DispatchQueue.main.async {
@@ -185,11 +205,23 @@ public class IslandManager: NSObject, NSWindowDelegate {
         NotchSpaceManager.shared.notchSpace.windows.insert(panel)
     }
     
+    private var mouseMonitor: Any?
+    private var localMouseMonitor: Any?
+    
     private func startGlobalHoverTimer() {
-        hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+        // [BUG FIX: High CPU Usage]
+        // Replaced the 50ms polling timer with an event-driven mouseMoved monitor
+        // to prevent extreme CPU wakeups and battery drain when the mouse is idle.
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
             Task { @MainActor in
                 self?.checkMouseHover()
             }
+        }
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            Task { @MainActor in
+                self?.checkMouseHover()
+            }
+            return event
         }
     }
     
@@ -230,9 +262,11 @@ public class IslandManager: NSObject, NSWindowDelegate {
             var hitWidth = stateModel.capsuleWidth
             var hitHeight = stateModel.capsuleHeight
             
-            if stateModel.state == .expanded { 
+            if stateModel.state == .expanded || stateModel.state == .modeSwitcher || stateModel.state == .trackChanged { 
                 hitWidth += 40
-                hitHeight += 10 
+                hitHeight += 20 
+            } else if stateModel.state == .idle {
+                hitHeight = min(hitHeight, 12) // Require sliding deeper into the notch (top 12px)
             }
             
             let minX = mainScreen.frame.midX - (hitWidth / 2)
@@ -327,7 +361,10 @@ public class IslandManager: NSObject, NSWindowDelegate {
         let x = targetScreen.frame.origin.x + (targetScreen.frame.width - width) / 2
         let y = targetScreen.frame.maxY - height
         
-        window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+        let newFrame = NSRect(x: x, y: y, width: width, height: height)
+        if window.frame != newFrame {
+            window.setFrame(newFrame, display: true)
+        }
         
         if let lyricWindow = lyricWindow {
             var targetLyricIndex = stateModel.lyricScreenIndex
@@ -367,7 +404,10 @@ public class IslandManager: NSObject, NSWindowDelegate {
                 let lScreen = screens[lIndex]
                 let lX = lScreen.frame.origin.x + (lScreen.frame.width - width) / 2
                 let lY = lScreen.frame.maxY - height
-                lyricWindow.setFrame(NSRect(x: lX, y: lY, width: width, height: height), display: true)
+                let newFrame = NSRect(x: lX, y: lY, width: width, height: height)
+                if lyricWindow.frame != newFrame {
+                    lyricWindow.setFrame(newFrame, display: true)
+                }
                 lyricWindow.alphaValue = isMirrored ? 0.0 : 1.0
             } else {
                 lyricWindow.alphaValue = 0.0

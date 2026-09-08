@@ -59,8 +59,22 @@ struct IslandView: View {
                     } else {
                         trackChangedContent
                     }
+                case .modeSwitcher:
+                    ModeSwitcherView()
+                        .padding(.top, hasPhysicalNotch ? 24 : 0)
+                case .notification:
+                    if let text = stateModel.notificationText {
+                        Text(text)
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.top, 16)
+                    }
                 case .expanded:
-                    ExpandedPanelView()
+                    if stateModel.currentMode == .media {
+                        ExpandedPanelView()
+                    } else {
+                        MountPanelView()
+                    }
                 }
             }
             .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
@@ -112,7 +126,8 @@ struct IslandView: View {
     
     private func updateStateDimensions() {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0)) {
-            if mediaObserver.state.title.isEmpty {
+            // Allow expansion even if empty
+            if mediaObserver.state.title.isEmpty && stateModel.state == .idle {
                 stateModel.capsuleWidth = baseNotchWidth
                 stateModel.capsuleHeight = baseNotchHeight
                 return
@@ -136,7 +151,13 @@ struct IslandView: View {
                 stateModel.capsuleHeight = hasPhysicalNotch ? baseNotchHeight + (26 * notchScale) : baseNotchHeight
             case .expanded:
                 stateModel.capsuleWidth = 380
-                stateModel.capsuleHeight = 160
+                stateModel.capsuleHeight = stateModel.currentMode == .disk ? 200 : 160
+            case .modeSwitcher:
+                stateModel.capsuleWidth = 260
+                stateModel.capsuleHeight = hasPhysicalNotch ? 120 : 100
+            case .notification:
+                stateModel.capsuleWidth = 300
+                stateModel.capsuleHeight = hasPhysicalNotch ? baseNotchHeight + 36 : baseNotchHeight + 10
             case .multiAppList:
                 stateModel.capsuleWidth = baseNotchWidth + 80
                 stateModel.capsuleHeight = baseNotchHeight
@@ -213,6 +234,10 @@ struct IslandView: View {
                     lyricAndPlayButtonView
                         .contentShape(Rectangle())
                         .onTapGesture(count: 2) { cycleLyricScreen() }
+                        .onTapGesture(count: 1) {
+                            stateModel.currentMode = .media
+                            withAnimation { stateModel.state = .expanded }
+                        }
                 } else {
                     Spacer() // Center is the physical notch
                 }
@@ -303,6 +328,11 @@ struct IslandView: View {
             }
             .frame(height: 26 * notchScale) // Fill the added vertical space
             .padding(.horizontal, 20 * notchScale)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                stateModel.currentMode = .media
+                withAnimation { stateModel.state = .expanded }
+            }
         }
         .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
     }
@@ -367,23 +397,36 @@ struct IslandView: View {
     private func handleHover(_ isHovering: Bool) {
         hoverTimer?.invalidate()
         if isHovering {
-            // We want it to expand if there's any active app
-            let hasActiveApps = !mediaObserver.activeMediaApps.isEmpty
-            guard hasActiveApps else { return }
+            let hasMusicState = !mediaObserver.state.title.isEmpty
+            
+            if !hasMusicState {
+                hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+                    Task { @MainActor in
+                        if self.stateModel.state == .idle {
+                            withAnimation {
+                                self.stateModel.state = .modeSwitcher
+                            }
+                        }
+                    }
+                }
+                return
+            }
             
             hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
                 Task { @MainActor in
-                    if self.stateModel.state == .idle {
-                        withAnimation {
-                            self.stateModel.state = .trackChanged
-                        }
+                    if self.stateModel.state == .notification {
+                        withAnimation { self.stateModel.state = .expanded }
+                        return
                     }
                     
-                    // Schedule expansion after another 1.0s
-                    self.hoverTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
+                    if self.stateModel.state == .idle {
+                        withAnimation { self.stateModel.state = .trackChanged }
+                    }
+                    
+                    self.hoverTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { _ in
                         Task { @MainActor in
-                            // Only expand if we are in trackChanged or idle (don't override multiAppList)
                             if self.stateModel.state == .trackChanged || self.stateModel.state == .idle {
+                                self.stateModel.currentMode = .media
                                 withAnimation {
                                     self.stateModel.state = .expanded
                                 }

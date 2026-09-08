@@ -221,6 +221,11 @@ struct OrbitalWindowIcon: View {
                                         .padding(2)
                                         .background(Circle().fill(Color.black.opacity(0.7)))
                                         .offset(x: 4, y: -4)
+                                        .contextMenu {
+                                            Button("重新注入 (Re-inject)") {
+                                                ServerManager.shared.reinjectApp(appId: window.appBundleID)
+                                            }
+                                        }
                                 }
                             },
                             alignment: .topTrailing
@@ -304,6 +309,11 @@ struct OrbitalGroupedAppIcon: View {
                                         .padding(2)
                                         .background(Circle().fill(Color.black.opacity(0.7)))
                                         .offset(x: 4, y: -4)
+                                        .contextMenu {
+                                            Button("重新注入 (Re-inject)") {
+                                                ServerManager.shared.reinjectApp(appId: bundleID)
+                                            }
+                                        }
                                 }
                             },
                             alignment: .topTrailing

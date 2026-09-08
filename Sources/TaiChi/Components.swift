@@ -84,6 +84,11 @@ struct OrbitalAppIcon: View {
                                     .padding(2)
                                     .background(Circle().fill(Color.black.opacity(0.7)))
                                     .offset(x: 4, y: -4)
+                                    .contextMenu {
+                                        Button("重新注入 (Re-inject)") {
+                                            ServerManager.shared.reinjectApp(appId: bundleID)
+                                        }
+                                    }
                             }
                         },
                         alignment: .topTrailing
@@ -204,7 +209,7 @@ struct SettingsButton: View {
                 isHovered = hovering
                 hoverTimer?.invalidate()
                 if hovering && shouldShowApp {
-                    hoverTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { _ in
+                    hoverTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
                         Task { @MainActor in
                             withAnimation {
                                 self.showTaiChi = true

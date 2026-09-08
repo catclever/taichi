@@ -417,73 +417,48 @@ struct SystemSettingsTab: View {
     @ObservedObject var permissions = PermissionsManager.shared
     
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-            Text("系统配置")
-                .font(.headline)
-            
-            GroupBox(label: Text("底层服务配置")) {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack {
-                        Text("HTTP 网关端口:")
-                            .frame(width: 120, alignment: .leading)
-                        TextField("端口号", value: $settings.httpPort, formatter: NumberFormatter())
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .frame(width: 100)
-                        
-                        Spacer()
-                        
-                        Button(action: {
-                            ServerManager.shared.restart()
-                        }) {
-                            Label("重启网关 (清除缓存)", systemImage: "arrow.clockwise")
-                        }
-                    }
-                    HStack {
-                        Text("服务脚本存放目录:")
-                            .frame(width: 120, alignment: .leading)
-                        TextField("路径", text: $settings.scriptsPath)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                    }
-                    HStack {
-                        Text("HS 主配置目录:")
-                            .frame(width: 120, alignment: .leading)
-                        TextField("路径", text: $settings.hsConfigPath)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
+        Form {
+            Section(header: Text("底层服务配置").font(.headline)) {
+                HStack {
+                    TextField("HTTP 网关端口:", value: $settings.httpPort, formatter: NumberFormatter())
+                        .frame(width: 250)
+                    Spacer()
+                    Button(action: {
+                        ServerManager.shared.restart()
+                    }) {
+                        Label("重启网关 (清除缓存)", systemImage: "arrow.clockwise")
                     }
                 }
-                .padding()
+                TextField("服务脚本存放目录:", text: $settings.scriptsPath)
+                TextField("HS 主配置目录:", text: $settings.hsConfigPath)
             }
+            .padding(.bottom, 10)
             
-            GroupBox(label: Text("网络硬盘监控")) {
+            Section(header: Text("网络硬盘监控").font(.headline)) {
                 DiskMonitorTab()
             }
+            .padding(.bottom, 10)
             
-            
-            GroupBox(label: Text("菜单栏歌词 (MenuBar Lyrics)")) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("开启菜单栏滚动歌词", isOn: $settings.showMenuBarLyrics)
-                    Text("在系统顶部菜单栏实时滚动显示当前播放的歌词。点击歌词可展开极简播控面板。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding()
+            Section(header: Text("菜单栏歌词 (MenuBar Lyrics)").font(.headline)) {
+                Toggle("开启菜单栏滚动歌词", isOn: $settings.showMenuBarLyrics)
+                Text("在系统顶部菜单栏实时滚动显示当前播放的歌词。点击歌词可展开极简播控面板。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.bottom, 10)
             
-            GroupBox(label: Text("实验性功能 / 音频引擎优化")) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("开启音频防休眠 (Anti-Sleep Audio)", isOn: $settings.isAudioKeepAliveEnabled)
-                    Text("智能防断联：仅在连接蓝牙耳机时，于后台静音运行占位音频。解决网易云等软件暂停时，导致会议软件(Zoom/腾讯会议)无声的 macOS 底层 Bug。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding()
+            Section(header: Text("实验性功能 / 音频引擎优化").font(.headline)) {
+                Toggle("开启音频防休眠 (Anti-Sleep Audio)", isOn: $settings.isAudioKeepAliveEnabled)
+                Text("智能防断联：仅在连接蓝牙耳机时，于后台静音运行占位音频。解决网易云等软件暂停时，导致会议软件(Zoom/腾讯会议)无声的 macOS 底层 Bug。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.bottom, 10)
             
-            GroupBox(label: Text("系统权限状态")) {
-                VStack(alignment: .leading, spacing: 16) {
+            Section(header: Text("系统权限状态").font(.headline)) {
+                VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Image(systemName: permissions.hasAccessibility ? "checkmark.circle.fill" : "xmark.circle.fill")
                             .foregroundColor(permissions.hasAccessibility ? .green : .red)
@@ -510,13 +485,10 @@ struct SystemSettingsTab: View {
                         }
                     }
                 }
-                .padding()
             }
-            
-            Spacer()
         }
+        .formStyle(.grouped)
         .padding()
-        }
     }
 }
 

@@ -209,6 +209,40 @@ class ServerManager: @unchecked Sendable {
         }
     }
     
+    func reinjectApp(appId: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let runningApps = NSWorkspace.shared.runningApplications
+            guard let workerPort = self.workerPort else { return }
+            
+            DispatchQueue.global(qos: .background).async {
+                if let app = runningApps.first(where: { $0.bundleIdentifier == appId }),
+                   let portStr = self.getDebuggingPort(for: app.processIdentifier),
+                   let targetPort = Int(portStr) {
+                    
+                    print("🔄 Manual re-invoking worker for \(appId) on port \(targetPort)...")
+                    var components = URLComponents()
+                    components.scheme = "http"
+                    components.host = "127.0.0.1"
+                    components.port = workerPort
+                    components.path = "/script/apps/\(appId)/worker/index"
+                    components.queryItems = [URLQueryItem(name: "port", value: String(targetPort))]
+                    
+                    if let url = components.url {
+                        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+                            if let error = error {
+                                print("⚠️ Manual reinject failed for \(appId): \(error.localizedDescription)")
+                            } else if let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 {
+                                print("✅ Manual reinject succeeded for \(appId)")
+                            }
+                        }
+                        task.resume()
+                    }
+                }
+            }
+        }
+    }
+
     private func reinjectActiveApps() {
         print("⏰ System woke up from sleep. Re-injecting Cyber mode hooks...")
         DispatchQueue.main.async { [weak self] in

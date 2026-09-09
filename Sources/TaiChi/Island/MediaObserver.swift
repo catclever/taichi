@@ -270,9 +270,9 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         }
         
         // 1. Try custom cyber media handler (registered by frontend)
-        if let script = ServerManager.shared.getCyberMediaHandler(appId: targetBundleId, command: "playpause") {
+        if let script = ServerManager.shared.getCyberMediaHandler(appId: bundleId, command: "playpause") {
             DispatchQueue.global().async {
-                _ = ServerManager.shared.evaluateCyberScript(appId: targetBundleId, script: script)
+                _ = ServerManager.shared.evaluateCyberScript(appId: bundleId, script: script)
             }
             return
         }

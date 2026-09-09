@@ -2,7 +2,17 @@
 
 APP_NAME="TaiChi"
 APP_BUNDLE="$APP_NAME.app"
-BIN_PATH=".build/debug/$APP_NAME"
+
+# Detect binary path based on architecture
+if [ -d ".build/arm64-apple-macosx/debug" ]; then
+    BUILD_DIR=".build/arm64-apple-macosx/debug"
+elif [ -d ".build/x86_64-apple-macosx/debug" ]; then
+    BUILD_DIR=".build/x86_64-apple-macosx/debug"
+else
+    BUILD_DIR=".build/debug"
+fi
+
+BIN_PATH="$BUILD_DIR/$APP_NAME"
 
 echo "Building Swift package..."
 swift build
@@ -19,7 +29,13 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 # Copy executable
 cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/"
 
-# Copy Resources
+# Copy Resources bundle (SwiftPM generated)
+BUNDLE_NAME="${APP_NAME}_${APP_NAME}.bundle"
+if [ -d "$BUILD_DIR/$BUNDLE_NAME" ]; then
+    cp -R "$BUILD_DIR/$BUNDLE_NAME" "$APP_BUNDLE/Contents/Resources/"
+fi
+
+# Fallback copy raw resources just in case (e.g. AppIcon needs them)
 if [ -d "Sources/TaiChi/Resources" ]; then
     cp -R Sources/TaiChi/Resources/* "$APP_BUNDLE/Contents/Resources/"
 fi
@@ -46,7 +62,7 @@ if [ -f "generate_icon.swift" ]; then
 fi
 
 # Create basic Info.plist
-cat <<EOF > "$APP_BUNDLE/Contents/Info.plist"
+cat <<PLIST_EOF > "$APP_BUNDLE/Contents/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -71,7 +87,7 @@ cat <<EOF > "$APP_BUNDLE/Contents/Info.plist"
     <string>太极需要屏幕录制权限来获取其他桌面的窗口信息</string>
 </dict>
 </plist>
-EOF
+PLIST_EOF
 
 echo "Signing app bundle..."
 codesign --force --deep --sign - "$APP_BUNDLE"

@@ -207,7 +207,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                     newState.isPlaying = playing
                     newState.lastElapsedTimeUpdate = Date() // Reset on play/pause too to keep it accurate
                 }
-                if let bundle = payload.bundleIdentifier { newState.bundleIdentifier = bundle }
+                if let bundle = payload.bundleIdentifier, !bundle.isEmpty { newState.bundleIdentifier = bundle }
                 if let mediaType = payload.mediaType { newState.mediaType = mediaType }
                 
                 if let base64 = payload.artworkData {
@@ -270,9 +270,9 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         }
         
         // 1. Try custom cyber media handler (registered by frontend)
-        if let script = ServerManager.shared.getCyberMediaHandler(appId: bundleId, command: "playpause") {
+        if let script = ServerManager.shared.getCyberMediaHandler(appId: targetBundleId, command: "playpause") {
             DispatchQueue.global().async {
-                _ = ServerManager.shared.evaluateCyberScript(appId: bundleId, script: script)
+                _ = ServerManager.shared.evaluateCyberScript(appId: targetBundleId, script: script)
             }
             return
         }
@@ -281,10 +281,31 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         sendCommand(2, targetBundleId: bundleId.isEmpty ? nil : bundleId)
     }
     
+    private func simulateMediaKey(_ commandId: Int) {
+        let keyCode: Int32
+        switch commandId {
+        case 2: keyCode = 16 // NX_KEYTYPE_PLAY
+        case 4: keyCode = 17 // NX_KEYTYPE_NEXT
+        case 5: keyCode = 18 // NX_KEYTYPE_PREVIOUS
+        default: return
+        }
+        let eventDown = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: NSEvent.ModifierFlags(rawValue: 0xA00), timestamp: 0, windowNumber: 0, context: nil, subtype: 8, data1: Int((keyCode << 16) | 0x0A), data2: -1)
+        let eventUp = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: NSEvent.ModifierFlags(rawValue: 0xB00), timestamp: 0, windowNumber: 0, context: nil, subtype: 8, data1: Int((keyCode << 16) | 0x0B), data2: -1)
+        eventDown?.cgEvent?.post(tap: .cghidEventTap)
+        eventUp?.cgEvent?.post(tap: .cghidEventTap)
+    }
+
     func sendTargetedCommand(_ commandId: Int) {
-        let bundleId = state.bundleIdentifier ?? ""
+        var bundleId = state.bundleIdentifier ?? ""
+        
+        // If bundleId is empty, try to get from activeMediaApps
+        var targetBundleId = bundleId
+        if targetBundleId.isEmpty, let firstActive = activeMediaApps.first(where: { $0.isPlaying || $0.playStateString == "playing" || $0.playStateString == "paused" }) {
+            targetBundleId = firstActive.bundleIdentifier
+        }
         
         let commandKey: String
+
         switch commandId {
         case 2: commandKey = "playpause"
         case 4: commandKey = "next"
@@ -293,11 +314,11 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         }
         
         // 1. Check custom cyber media handler (registered by frontend)
-        if !commandKey.isEmpty && !bundleId.isEmpty {
-            if let script = ServerManager.shared.getCyberMediaHandler(appId: bundleId, command: commandKey) {
-                print("✅ [MediaObserver] Executing registered cyber media handler for '\(commandKey)' on \(bundleId)")
+        if !commandKey.isEmpty && !targetBundleId.isEmpty {
+            if let script = ServerManager.shared.getCyberMediaHandler(appId: targetBundleId, command: commandKey) {
+                print("✅ [MediaObserver] Executing registered cyber media handler for '\(commandKey)' on \(targetBundleId)")
                 DispatchQueue.global().async {
-                    _ = ServerManager.shared.evaluateCyberScript(appId: bundleId, script: script)
+                    _ = ServerManager.shared.evaluateCyberScript(appId: targetBundleId, script: script)
                 }
                 return
             }
@@ -306,7 +327,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         let supportedApps = ["com.apple.Music", "com.spotify.client", "com.netease.163music", "com.tencent.QQMusicMac"]
         
         // 2. If it's a supported app, try AppleScript first
-        if supportedApps.contains(bundleId) {
+        if supportedApps.contains(targetBundleId) {
             let scriptCommand: String
             switch commandId {
             case 2: scriptCommand = "playpause"
@@ -316,23 +337,29 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
             }
             
             if !scriptCommand.isEmpty {
-                let scriptSource = "tell application id \"\(bundleId)\" to \(scriptCommand)"
+                let scriptSource = "tell application id \"\(targetBundleId)\" to \(scriptCommand)"
                 if let script = NSAppleScript(source: scriptSource) {
                     var errorInfo: NSDictionary?
                     script.executeAndReturnError(&errorInfo)
                     if errorInfo == nil {
-                        print("✅ [MediaObserver] Successfully sent targeted command '\(scriptCommand)' to \(bundleId)")
+                        print("✅ [MediaObserver] Successfully sent targeted command '\(scriptCommand)' to \(targetBundleId)")
                         return
                     } else {
-                        print("⚠️ [MediaObserver] Targeted AppleScript failed for \(bundleId): \(errorInfo?.description ?? "unknown error"). Falling back to MR.")
+                        print("⚠️ [MediaObserver] Targeted AppleScript failed for \(targetBundleId): \(errorInfo?.description ?? "unknown error"). Falling back to MR.")
                     }
                 }
             }
         }
         
+        if targetBundleId.isEmpty {
+            print("ℹ️ [MediaObserver] BundleID is empty, simulating hardware media key as global fallback.")
+            simulateMediaKey(commandId)
+            return
+        }
+        
         // 3. Fallback to targeted MR command, no global broadcast
-        print("ℹ️ [MediaObserver] Sending targeted MR command \(commandId) to \(bundleId.isEmpty ? "global" : bundleId)")
-        sendCommand(commandId, targetBundleId: bundleId.isEmpty ? nil : bundleId)
+        print("ℹ️ [MediaObserver] Sending targeted MR command \(commandId) to \(targetBundleId)")
+        sendCommand(commandId, targetBundleId: targetBundleId)
     }
     
     func seek(to time: Double) {

@@ -53,7 +53,7 @@ open -a TaiChi
 
 ---
 
-## 🎩 Alfred 神级联动 (Alfred Workflow)
+## 🎩 Alfred 联动 (Alfred Workflow)
 
 我们为 Alfred 深度定制了 API 后端，你可以用最优雅的姿势掌控一切应用。
 

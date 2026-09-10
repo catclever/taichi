@@ -113,14 +113,14 @@ public class IslandManager: NSObject, NSWindowDelegate {
     
     private func setupMainWindow() {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: 200),
+            contentRect: NSRect(x: 500, y: 1000, width: 800, height: 200),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         
         panel.level = NSWindow.Level(rawValue: Int(NSWindow.Level.mainMenu.rawValue) + 3)
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        panel.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -141,14 +141,14 @@ public class IslandManager: NSObject, NSWindowDelegate {
     
     private func setupLyricWindow() {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 100),
+            contentRect: NSRect(x: 500, y: 1000, width: 400, height: 100),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         
         panel.level = NSWindow.Level(rawValue: Int(NSWindow.Level.mainMenu.rawValue) + 3)
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        panel.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -168,14 +168,14 @@ public class IslandManager: NSObject, NSWindowDelegate {
     
     private func setupMultiAppListWindow() {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 400),
+            contentRect: NSRect(x: 500, y: 1000, width: 300, height: 400),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         
         panel.level = NSWindow.Level(rawValue: Int(NSWindow.Level.mainMenu.rawValue) + 3)
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        panel.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
         panel.hasShadow = false

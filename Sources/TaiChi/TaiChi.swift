@@ -215,7 +215,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         customWindow.backgroundColor = .clear
         customWindow.hasShadow = false
         customWindow.level = .floating
-        customWindow.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        customWindow.collectionBehavior = [.stationary, .ignoresCycle]
         
         let hostingView = AcceptingFirstMouseHostingView(rootView: contentView)
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor

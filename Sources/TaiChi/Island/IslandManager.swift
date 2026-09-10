@@ -7,13 +7,13 @@ import os.log
 public class IslandManager: NSObject, NSWindowDelegate {
     public static let shared = IslandManager()
     
-    private var window: NSWindow?
+    private var window: NSPanel?
     private var hostingView: NSHostingView<AnyView>?
     
-    private var lyricWindow: NSWindow?
+    private var lyricWindow: NSPanel?
     private var lyricHostingView: NSHostingView<AnyView>?
     
-    private var multiAppListWindow: NSWindow?
+    private var multiAppListWindow: NSPanel?
     private var multiAppListHostingView: NSHostingView<AnyView>?
     
     private var cancellables = Set<AnyCancellable>()
@@ -112,7 +112,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
     }
     
     private func setupMainWindow() {
-        let panel = NSWindow(
+        let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 200),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -135,12 +135,12 @@ public class IslandManager: NSObject, NSWindowDelegate {
         self.hostingView = hostView
         self.window = panel
         
-        panel.makeKeyAndOrderFront(nil)
+        panel.orderFront(nil)
         NotchSpaceManager.shared.notchSpace.windows.insert(panel)
     }
     
     private func setupLyricWindow() {
-        let panel = NSWindow(
+        let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 400, height: 100),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -162,12 +162,12 @@ public class IslandManager: NSObject, NSWindowDelegate {
         self.lyricHostingView = hostView
         self.lyricWindow = panel
         
-        panel.makeKeyAndOrderFront(nil)
+        panel.orderFront(nil)
         NotchSpaceManager.shared.notchSpace.windows.insert(panel)
     }
     
     private func setupMultiAppListWindow() {
-        let panel = NSWindow(
+        let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 300, height: 400),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -201,7 +201,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
         self.multiAppListHostingView = hostView
         self.multiAppListWindow = panel
         
-        panel.makeKeyAndOrderFront(nil)
+        panel.orderFront(nil)
         NotchSpaceManager.shared.notchSpace.windows.insert(panel)
     }
     

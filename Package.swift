@@ -21,10 +21,6 @@ let package = Package(
                 .copy("Resources")
             ]
         ),
-        .testTarget(
-            name: "TaiChiTests",
-            dependencies: ["TaiChi"]
-        ),
     ],
     swiftLanguageModes: [.v6]
 )

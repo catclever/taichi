@@ -128,7 +128,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
         panel.delegate = self
         
         let islandView = IslandView().environmentObject(IslandStateModel.shared)
-        let hostView = NSHostingView(rootView: AnyView(islandView))
+        let hostView = AcceptingFirstMouseHostingView(rootView: AnyView(islandView))
         hostView.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = hostView
         
@@ -155,7 +155,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
         panel.isOpaque = false
         
         let lyricView = StandaloneLyricView().environmentObject(IslandStateModel.shared)
-        let hostView = NSHostingView(rootView: AnyView(lyricView))
+        let hostView = AcceptingFirstMouseHostingView(rootView: AnyView(lyricView))
         hostView.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = hostView
         
@@ -191,7 +191,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
         visualEffect.layer?.cornerRadius = 24
         visualEffect.layer?.masksToBounds = true
         
-        let hostView = NSHostingView(rootView: AnyView(listView))
+        let hostView = AcceptingFirstMouseHostingView(rootView: AnyView(listView))
         hostView.autoresizingMask = [.width, .height]
         
         visualEffect.addSubview(hostView)

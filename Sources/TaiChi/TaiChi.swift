@@ -221,7 +221,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         customWindow.contentView = hostingView
         
-        customWindow.makeKeyAndOrderFront(nil)
+        customWindow.orderFront(nil)
         self.window = customWindow
         
         NotificationCenter.default.addObserver(forName: .hideTaiChi, object: nil, queue: .main) { [weak self] _ in

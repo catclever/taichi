@@ -28,6 +28,9 @@ class ServerManager: @unchecked Sendable {
 
     
     private init() {
+        if let saved = UserDefaults.standard.dictionary(forKey: "cyberMediaHandlers") as? [String: [String: String]] {
+            self.cyberMediaHandlers = saved
+        }
         setupRoutes()
     }
     
@@ -1590,6 +1593,7 @@ class ServerManager: @unchecked Sendable {
         }
         DispatchQueue.main.async {
             self.cyberMediaHandlers[appId] = handlers
+            UserDefaults.standard.set(self.cyberMediaHandlers, forKey: "cyberMediaHandlers")
             print("✅ [ServerManager] Registered media handlers for \(appId)")
         }
         return jsonResponse(["success": true])

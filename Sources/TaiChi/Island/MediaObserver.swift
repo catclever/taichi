@@ -47,6 +47,21 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
     init() {
         startStreaming()
         startPoller()
+        
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] notification in
+            guard let self = self,
+                  let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let bundleId = app.bundleIdentifier else { return }
+                  
+            // If the terminated app is our current media app, clear the state
+            if self.state.bundleIdentifier == bundleId {
+                print("ℹ️ [MediaObserver] Playing app \(bundleId) exited. Clearing media state.")
+                self.state.title = ""
+                self.state.artist = ""
+                self.state.isPlaying = false
+                self.state.artworkData = nil
+            }
+        }
     }
     
     deinit {

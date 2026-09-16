@@ -1,5 +1,6 @@
 import SwiftUI
 
+
 struct MarqueeText: View {
     let text: String
     let font: Font

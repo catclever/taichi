@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+
 import Combine
 
 struct SMBMountConfig: Identifiable, Codable, Equatable {

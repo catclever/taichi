@@ -33,6 +33,12 @@ cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/"
 BUNDLE_NAME="${APP_NAME}_${APP_NAME}.bundle"
 if [ -d "$BUILD_DIR/$BUNDLE_NAME" ]; then
     cp -R "$BUILD_DIR/$BUNDLE_NAME" "$APP_BUNDLE/Contents/Resources/"
+    # Workaround for SPM generated resource accessor in CLI tools looking in bundleURL root
+    cp -R "$BUILD_DIR/$BUNDLE_NAME" "$APP_BUNDLE/"
+    cp -R "$BUILD_DIR/$BUNDLE_NAME" "$APP_BUNDLE/Contents/MacOS/"
+    # Workaround for SPM generated resource accessor in CLI tools looking in bundleURL root
+    cp -R "$BUILD_DIR/$BUNDLE_NAME" "$APP_BUNDLE/"
+    cp -R "$BUILD_DIR/$BUNDLE_NAME" "$APP_BUNDLE/Contents/MacOS/"
 fi
 
 # Fallback copy raw resources just in case (e.g. AppIcon needs them)

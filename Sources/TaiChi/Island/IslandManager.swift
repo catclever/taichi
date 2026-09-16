@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+
 import Combine
 import os.log
 
@@ -272,6 +273,14 @@ public class IslandManager: NSObject, NSWindowDelegate {
             let minX = mainScreen.frame.midX - (hitWidth / 2)
             let maxX = mainScreen.frame.midX + (hitWidth / 2)
             let minY = mainScreen.frame.maxY - hitHeight
+            
+            // Second stage hover: Physical notch area (~36px height)
+            let notchMinY = mainScreen.frame.maxY - 36
+            let isNotchHovered = mouseLocation.x >= minX && mouseLocation.x <= maxX && mouseLocation.y >= notchMinY
+            
+            // But we don't want the bottom popped-out part to count as notchHovered
+            // So if mouse Y is lower than notchMinY, it's not notchHovered.
+            stateModel.isNotchHovered = isNotchHovered
             
             isMainHovered = mouseLocation.x >= minX && mouseLocation.x <= maxX && mouseLocation.y >= minY
         }

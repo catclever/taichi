@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import SwiftUI
 
+
 enum IslandMode: String, Equatable {
     case media
     case disk
@@ -43,6 +44,7 @@ class IslandStateModel: ObservableObject {
     @Published var capsuleWidth: CGFloat = 160
     @Published var capsuleHeight: CGFloat = 36
     @Published var isHovering: Bool = false
+    @Published var isNotchHovered: Bool = false
     @Published var isPinned: Bool = false
     
     @Published var isLyricPinned: Bool {

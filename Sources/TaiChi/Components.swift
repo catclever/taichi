@@ -1,5 +1,6 @@
 import SwiftUI
 
+
 enum AppWindowState {
     case activeVisible
     case offscreen

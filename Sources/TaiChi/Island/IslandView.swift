@@ -1,4 +1,5 @@
 import SwiftUI
+
 import Cocoa
 
 struct IslandView: View {
@@ -90,6 +91,39 @@ struct IslandView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleWidth)
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleHeight)
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.state)
+        .onChange(of: stateModel.isNotchHovered) { isNotchHovered in
+            hoverTimer?.invalidate()
+            if isNotchHovered && stateModel.state == .trackChanged && !mediaObserver.state.title.isEmpty {
+                // Instantly expand if they actively move into the notch from stage 1?
+                // Wait, if they just transitioned to stage 1, they didn't actively move into the notch.
+                // Let's just use a 0.5s timer so there's a slight delay, making it feel like a smooth 2-stage interaction.
+                hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+                    Task { @MainActor in
+                        if self.stateModel.isNotchHovered && self.stateModel.state == .trackChanged {
+                            self.stateModel.currentMode = .media
+                            withAnimation {
+                                self.stateModel.state = .expanded
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .onChange(of: stateModel.state) { newState in
+            if newState == .trackChanged && stateModel.isNotchHovered && !mediaObserver.state.title.isEmpty {
+                hoverTimer?.invalidate()
+                hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+                    Task { @MainActor in
+                        if self.stateModel.isNotchHovered && self.stateModel.state == .trackChanged {
+                            self.stateModel.currentMode = .media
+                            withAnimation {
+                                self.stateModel.state = .expanded
+                            }
+                        }
+                    }
+                }
+            }
+        }
         .onChange(of: stateModel.isHovering) { isHovering in
             handleHover(isHovering)
         }
@@ -423,16 +457,7 @@ struct IslandView: View {
                         withAnimation { self.stateModel.state = .trackChanged }
                     }
                     
-                    self.hoverTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { _ in
-                        Task { @MainActor in
-                            if self.stateModel.state == .trackChanged || self.stateModel.state == .idle {
-                                self.stateModel.currentMode = .media
-                                withAnimation {
-                                    self.stateModel.state = .expanded
-                                }
-                            }
-                        }
-                    }
+
                 }
             }
         } else {

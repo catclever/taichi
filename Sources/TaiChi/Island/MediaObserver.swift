@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+
 import Combine
 
 struct ActiveMediaApp: Equatable, Identifiable {
@@ -232,7 +233,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
     }
     
     func sendCommand(_ commandId: Int, targetBundleId: String? = nil) {
-        guard let resourcePath = Bundle.module.resourcePath else { return }
+        guard let resourcePath = Bundle.main.resourcePath else { return }
         
         let process = Process()
         
@@ -277,8 +278,9 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
             return
         }
         
-        // 2. Fallback to targeted MR command
-        sendCommand(2, targetBundleId: bundleId.isEmpty ? nil : bundleId)
+        // 2. Fallback to global broadcast using hardware keys
+        print("ℹ️ [MediaObserver] toggleApp: Sending global broadcast command 2 via hardware key simulation")
+        simulateMediaKey(2)
     }
     
     private func simulateMediaKey(_ commandId: Int) {
@@ -289,8 +291,9 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         case 5: keyCode = 18 // NX_KEYTYPE_PREVIOUS
         default: return
         }
-        let eventDown = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: NSEvent.ModifierFlags(rawValue: 0xA00), timestamp: 0, windowNumber: 0, context: nil, subtype: 8, data1: Int((keyCode << 16) | 0x0A), data2: -1)
-        let eventUp = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: NSEvent.ModifierFlags(rawValue: 0xB00), timestamp: 0, windowNumber: 0, context: nil, subtype: 8, data1: Int((keyCode << 16) | 0x0B), data2: -1)
+        let loc = NSEvent.mouseLocation
+        let eventDown = NSEvent.otherEvent(with: .systemDefined, location: loc, modifierFlags: NSEvent.ModifierFlags(rawValue: 0xA00), timestamp: 0, windowNumber: 0, context: nil, subtype: 8, data1: Int((keyCode << 16) | 0x0A), data2: -1)
+        let eventUp = NSEvent.otherEvent(with: .systemDefined, location: loc, modifierFlags: NSEvent.ModifierFlags(rawValue: 0xB00), timestamp: 0, windowNumber: 0, context: nil, subtype: 8, data1: Int((keyCode << 16) | 0x0B), data2: -1)
         eventDown?.cgEvent?.post(tap: .cghidEventTap)
         eventUp?.cgEvent?.post(tap: .cghidEventTap)
     }
@@ -344,7 +347,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
             }
         }
         
-        // 3. Fallback to global broadcast using hardware keys (more robust than MR for suspended apps)
+        // 3. Fallback to global broadcast using hardware keys (more robust than MR for Electron apps like MusicFree)
         print("ℹ️ [MediaObserver] Sending global broadcast command \(commandId) via hardware key simulation")
         simulateMediaKey(commandId)
         

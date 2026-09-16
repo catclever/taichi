@@ -1,5 +1,6 @@
 import SwiftUI
 
+
 enum MonitoredAppsMode {
     case windows
     case apps

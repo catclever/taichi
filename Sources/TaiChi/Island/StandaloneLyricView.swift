@@ -97,6 +97,10 @@ struct StandaloneLyricView: View {
         .onAppear {
             startTimer()
         }
+        .onDisappear {
+            timer?.cancel()
+            timer = nil
+        }
         .onChange(of: mediaObserver.state.elapsedTime) { newValue in
             localElapsedTime = newValue
         }
@@ -105,6 +109,7 @@ struct StandaloneLyricView: View {
                 startTimer()
             } else {
                 timer?.cancel()
+                timer = nil
             }
         }
         .onTapGesture(count: 2) {
@@ -134,6 +139,8 @@ struct StandaloneLyricView: View {
                 .sink { _ in
                     localElapsedTime += 0.1
                 }
+        } else {
+            timer = nil
         }
     }
 

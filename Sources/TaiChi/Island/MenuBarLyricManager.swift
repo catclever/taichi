@@ -21,6 +21,7 @@ class MenuBarLyricManager: NSObject {
     
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
+    private var lyricTimer: Timer?
     
     private var currentFullLyric: String = ""
     
@@ -39,19 +40,52 @@ class MenuBarLyricManager: NSObject {
         TaiChiSettings.shared.$showMenuBarLyrics
             .receive(on: DispatchQueue.main)
             .sink { [weak self] show in
+                guard let self = self else { return }
                 if show {
-                    self?.createStatusItem()
+                    self.createStatusItem()
                 } else {
-                    self?.removeStatusItem()
+                    self.removeStatusItem()
                 }
+                self.evaluateTimer()
             }
             .store(in: &cancellables)
             
-        // Timer to sync current lyric
-        let timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            self?.updateLyric()
+        MediaObserver.shared.$state
+            .map { $0.isPlaying }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isPlaying in
+                guard let self = self else { return }
+                if !isPlaying {
+                    self.stopTimer()
+                    self.updateLyric()
+                } else {
+                    self.evaluateTimer()
+                }
+            }
+            .store(in: &cancellables)
+    }
+    
+    private func evaluateTimer() {
+        let shouldRun = TaiChiSettings.shared.showMenuBarLyrics && MediaObserver.shared.state.isPlaying
+        if shouldRun {
+            if lyricTimer == nil {
+                let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.updateLyric()
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                lyricTimer = timer
+            }
+        } else {
+            stopTimer()
         }
-        RunLoop.main.add(timer, forMode: .common)
+    }
+    
+    private func stopTimer() {
+        lyricTimer?.invalidate()
+        lyricTimer = nil
     }
     
     private func createStatusItem() {

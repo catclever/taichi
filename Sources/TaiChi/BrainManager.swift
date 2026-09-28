@@ -10,6 +10,9 @@ actor BrainManager {
     // 全局显隐状态
     private var isAllFloatingAppsVisible: Bool = true
     
+    // 切屏锁：防止在切屏期间执行可能引起焦点冲突的动作
+    private var isSpaceTransitioning: Bool = false
+    
     // 防抖相关的 Task
     private var spaceChangeTask: Task<Void, Never>? = nil
     
@@ -55,6 +58,11 @@ actor BrainManager {
     // MARK: - Handlers
     
     private func togglePin(for appName: String) {
+        guard !isSpaceTransitioning else {
+            print("🧠 [BrainManager] togglePin blocked by space lock")
+            return
+        }
+        
         if pinnedApps.contains(appName) {
             pinnedApps.remove(appName)
             Task { try? await HSManager.shared.sendAction(action: "alert", params: ["text": "📍 已解开 \(appName) 的钉子"]) }
@@ -65,6 +73,11 @@ actor BrainManager {
     }
     
     private func toggleAllFloatingApps() {
+        guard !isSpaceTransitioning else {
+            print("🧠 [BrainManager] toggleAllFloatingApps blocked by space lock")
+            return
+        }
+        
         Task {
             isAllFloatingAppsVisible.toggle()
             let apps = await floatingApps
@@ -82,11 +95,17 @@ actor BrainManager {
         // 防抖：取消之前未执行的切屏任务
         spaceChangeTask?.cancel()
         
+        // 开启切屏锁
+        isSpaceTransitioning = true
+        
         spaceChangeTask = Task {
             // 延迟 500ms 等待 macOS 动画和事件风暴平息
             try? await Task.sleep(nanoseconds: 500_000_000)
             
             if Task.isCancelled { return }
+            
+            // 释放切屏锁
+            isSpaceTransitioning = false
             
             let apps = await floatingApps
             for app in apps {

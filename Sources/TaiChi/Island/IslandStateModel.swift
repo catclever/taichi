@@ -45,6 +45,8 @@ class IslandStateModel: ObservableObject {
     @Published var capsuleHeight: CGFloat = 36
     @Published var isHovering: Bool = false
     @Published var isNotchHovered: Bool = false
+    @Published public var isCenterNotchHovered: Bool = false
+    @Published public var isHoveringIcons: Bool = false
     @Published var isPinned: Bool = false
     
     @Published var isLyricPinned: Bool {

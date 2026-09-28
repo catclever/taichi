@@ -21,6 +21,8 @@ struct MonitoredApp: Identifiable, Codable, Equatable {
     var id: String // Bundle Identifier
     var name: String
     var path: String
+    var pid: pid_t?
+    var port: Int?
 }
 
 struct CommonPath: Identifiable, Codable, Equatable {
@@ -226,7 +228,9 @@ class TaiChiSettings: ObservableObject {
         didSet { saveWallpaperEngineConfig() }
     }
     
-    @Published var activeInjectedApps: [MonitoredApp] = []
+    @Published var activeInjectedApps: [MonitoredApp] = [] {
+        didSet { saveActiveInjectedApps() }
+    }
     
     init() {
         loadSettings()
@@ -298,6 +302,11 @@ class TaiChiSettings: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: "residentApps"),
            let apps = try? JSONDecoder().decode([ResidentApp].self, from: data) {
             residentApps = apps
+        }
+        
+        if let data = UserDefaults.standard.data(forKey: "activeInjectedApps"),
+           let apps = try? JSONDecoder().decode([MonitoredApp].self, from: data) {
+            activeInjectedApps = apps
         }
         
         if let data = UserDefaults.standard.data(forKey: "monitoredApps"),
@@ -482,6 +491,13 @@ class TaiChiSettings: ObservableObject {
         if let d1 = try? JSONEncoder().encode(hotkeyTogglePin) { UserDefaults.standard.set(d1, forKey: "hotkeyTogglePin") }
         if let d2 = try? JSONEncoder().encode(hotkeyToggleAll) { UserDefaults.standard.set(d2, forKey: "hotkeyToggleAll") }
         if let d3 = try? JSONEncoder().encode(hotkeyTelescope) { UserDefaults.standard.set(d3, forKey: "hotkeyTelescope") }
+    }
+    
+    private func saveActiveInjectedApps() {
+        guard !isInitializing else { return }
+        if let data = try? JSONEncoder().encode(activeInjectedApps) {
+            UserDefaults.standard.set(data, forKey: "activeInjectedApps")
+        }
     }
     
     private func saveWallpaperSettings() {

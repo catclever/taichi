@@ -1,0 +1,921 @@
+warning: 'taichi_launcher': found 8 file(s) which are unhandled; explicitly declare them as resources or exclude from the target
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandStateModel.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandManager_hover_logic_001.swift.draft
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandView.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandView_hover_logic_001.swift.draft
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandManager.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandStateModel_hover_logic_001.swift.draft
+[0/1] Planning build
+Building for debugging...
+[0/4] Write swift-version--58304C5D6DBC2206.txt
+error: compile command failed due to signal 11 (use -v to see invocation)
+[2/9] Compiling TaiChi Models_cyber_lazy_refresh_001.swift
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:6:8: error: invalid redeclaration of 'SMBMountConfig'
+  4 | import Combine
+  5 | 
+  6 | struct SMBMountConfig: Identifiable, Codable, Equatable {
+    |        `- error: invalid redeclaration of 'SMBMountConfig'
+  7 |     var id: String
+  8 |     var remotePath: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:14:8: error: invalid redeclaration of 'ResidentApp'
+ 12 | // 数据模型
+ 13 | 
+ 14 | struct ResidentApp: Identifiable, Codable, Equatable {
+    |        `- error: invalid redeclaration of 'ResidentApp'
+ 15 |     var id: String // Bundle Identifier
+ 16 |     var name: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:20:8: error: invalid redeclaration of 'MonitoredApp'
+ 18 | }
+ 19 | 
+ 20 | struct MonitoredApp: Identifiable, Codable, Equatable {
+    |        `- error: invalid redeclaration of 'MonitoredApp'
+ 21 |     var id: String // Bundle Identifier
+ 22 |     var name: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:28:8: error: invalid redeclaration of 'CommonPath'
+ 26 | }
+ 27 | 
+ 28 | struct CommonPath: Identifiable, Codable, Equatable {
+    |        `- error: invalid redeclaration of 'CommonPath'
+ 29 |     var id = UUID()
+ 30 |     var name: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:34:8: error: invalid redeclaration of 'FloatingApp'
+ 32 | }
+ 33 | 
+ 34 | struct FloatingApp: Identifiable, Codable, Equatable {
+    |        `- error: invalid redeclaration of 'FloatingApp'
+ 35 |     var id: String // Bundle Identifier
+ 36 |     var name: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:40:8: error: invalid redeclaration of 'MediaApp'
+ 38 | }
+ 39 | 
+ 40 | struct MediaApp: Identifiable, Codable, Equatable {
+    |        `- error: invalid redeclaration of 'MediaApp'
+ 41 |     var id: String // Bundle Identifier
+ 42 |     var name: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:52:8: error: invalid redeclaration of 'ScreenInfo'
+ 50 | }
+ 51 | 
+ 52 | struct ScreenInfo: Identifiable, Codable, Equatable {
+    |        `- error: invalid redeclaration of 'ScreenInfo'
+ 53 |     var id: String { uuid }
+ 54 |     var uuid: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:58:8: error: invalid redeclaration of 'WallpaperHistoryEntry'
+ 56 | }
+ 57 | 
+ 58 | struct WallpaperHistoryEntry: Codable, Equatable {
+    |        `- error: invalid redeclaration of 'WallpaperHistoryEntry'
+ 59 |     var photoId: String
+ 60 |     var timestamp: Date
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:65:8: error: invalid redeclaration of 'WallpaperEngineConfig'
+ 63 | }
+ 64 | 
+ 65 | struct WallpaperEngineConfig: Codable, Equatable {
+    |        `- error: invalid redeclaration of 'WallpaperEngineConfig'
+ 66 |     struct SourceConfig: Codable, Equatable {
+ 67 |         var key: String?
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:104:8: error: invalid redeclaration of 'HotkeyConfig'
+102 | 
+103 | // 快捷键模型
+104 | struct HotkeyConfig: Codable, Equatable {
+    |        `- error: invalid redeclaration of 'HotkeyConfig'
+105 |     var modifiers: [String]
+106 |     var key: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:121:34: error: 'SMBMountConfig' is ambiguous for type lookup in this context
+  4 | import Combine
+  5 | 
+  6 | struct SMBMountConfig: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+  7 |     var id: String
+  8 |     var remotePath: String
+    :
+119 |         }
+120 |     }
+121 | @Published var activeSMBMounts: [SMBMountConfig] = [] {
+    |                                  `- error: 'SMBMountConfig' is ambiguous for type lookup in this context
+122 |         didSet { saveActiveSMBMounts() }
+123 |     }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:6:8: note: found this candidate
+  4 | import Combine
+  5 | 
+  6 | struct SMBMountConfig: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+  7 |     var id: String
+  8 |     var remotePath: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:125:35: error: 'ResidentApp' is ambiguous for type lookup in this context
+ 12 | // 数据模型
+ 13 | 
+ 14 | struct ResidentApp: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 15 |     var id: String // Bundle Identifier
+ 16 |     var name: String
+    :
+123 |     }
+124 |     
+125 |     @Published var residentApps: [ResidentApp] = [] {
+    |                                   `- error: 'ResidentApp' is ambiguous for type lookup in this context
+126 |         didSet { saveResidentApps() }
+127 |     }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:14:8: note: found this candidate
+ 12 | // 数据模型
+ 13 | 
+ 14 | struct ResidentApp: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 15 |     var id: String // Bundle Identifier
+ 16 |     var name: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:129:36: error: 'MonitoredApp' is ambiguous for type lookup in this context
+ 18 | }
+ 19 | 
+ 20 | struct MonitoredApp: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 21 |     var id: String // Bundle Identifier
+ 22 |     var name: String
+    :
+127 |     }
+128 |     
+129 |     @Published var monitoredApps: [MonitoredApp] = [] {
+    |                                    `- error: 'MonitoredApp' is ambiguous for type lookup in this context
+130 |         didSet { saveMonitoredApps() }
+131 |     }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:20:8: note: found this candidate
+ 18 | }
+ 19 | 
+ 20 | struct MonitoredApp: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 21 |     var id: String // Bundle Identifier
+ 22 |     var name: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:133:32: error: 'MediaApp' is ambiguous for type lookup in this context
+ 38 | }
+ 39 | 
+ 40 | struct MediaApp: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 41 |     var id: String // Bundle Identifier
+ 42 |     var name: String
+    :
+131 |     }
+132 |     
+133 |     @Published var mediaApps: [MediaApp] = [] {
+    |                                `- error: 'MediaApp' is ambiguous for type lookup in this context
+134 |         didSet { saveMediaApps() }
+135 |     }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:40:8: note: found this candidate
+ 38 | }
+ 39 | 
+ 40 | struct MediaApp: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 41 |     var id: String // Bundle Identifier
+ 42 |     var name: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:137:35: error: 'FloatingApp' is ambiguous for type lookup in this context
+ 32 | }
+ 33 | 
+ 34 | struct FloatingApp: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 35 |     var id: String // Bundle Identifier
+ 36 |     var name: String
+    :
+135 |     }
+136 |     
+137 |     @Published var floatingApps: [FloatingApp] = [] {
+    |                                   `- error: 'FloatingApp' is ambiguous for type lookup in this context
+138 |         didSet { saveFloatingApps() }
+139 |     }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:34:8: note: found this candidate
+ 32 | }
+ 33 | 
+ 34 | struct FloatingApp: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 35 |     var id: String // Bundle Identifier
+ 36 |     var name: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:141:34: error: 'CommonPath' is ambiguous for type lookup in this context
+ 26 | }
+ 27 | 
+ 28 | struct CommonPath: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 29 |     var id = UUID()
+ 30 |     var name: String
+    :
+139 |     }
+140 |     
+141 |     @Published var commonPaths: [CommonPath] = [] {
+    |                                  `- error: 'CommonPath' is ambiguous for type lookup in this context
+142 |         didSet { saveCommonPaths() }
+143 |     }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:28:8: note: found this candidate
+ 26 | }
+ 27 | 
+ 28 | struct CommonPath: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 29 |     var id = UUID()
+ 30 |     var name: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:191:37: error: 'HotkeyConfig' is ambiguous for type lookup in this context
+102 | 
+103 | // 快捷键模型
+104 | struct HotkeyConfig: Codable, Equatable {
+    |        `- note: found this candidate
+105 |     var modifiers: [String]
+106 |     var key: String
+    :
+189 |     }
+190 |     
+191 |     @Published var hotkeyTogglePin: HotkeyConfig = HotkeyConfig(modifiers: ["ctrl"], key: "H") {
+    |                                     `- error: 'HotkeyConfig' is ambiguous for type lookup in this context
+192 |         didSet { 
+193 |             saveHotkeys()
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:104:8: note: found this candidate
+102 | 
+103 | // 快捷键模型
+104 | struct HotkeyConfig: Codable, Equatable {
+    |        `- note: found this candidate
+105 |     var modifiers: [String]
+106 |     var key: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:198:37: error: 'HotkeyConfig' is ambiguous for type lookup in this context
+102 | 
+103 | // 快捷键模型
+104 | struct HotkeyConfig: Codable, Equatable {
+    |        `- note: found this candidate
+105 |     var modifiers: [String]
+106 |     var key: String
+    :
+196 |     }
+197 |     
+198 |     @Published var hotkeyToggleAll: HotkeyConfig = HotkeyConfig(modifiers: ["cmd", "ctrl"], key: "H") {
+    |                                     `- error: 'HotkeyConfig' is ambiguous for type lookup in this context
+199 |         didSet { 
+200 |             saveHotkeys()
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:104:8: note: found this candidate
+102 | 
+103 | // 快捷键模型
+104 | struct HotkeyConfig: Codable, Equatable {
+    |        `- note: found this candidate
+105 |     var modifiers: [String]
+106 |     var key: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:205:37: error: 'HotkeyConfig' is ambiguous for type lookup in this context
+102 | 
+103 | // 快捷键模型
+104 | struct HotkeyConfig: Codable, Equatable {
+    |        `- note: found this candidate
+105 |     var modifiers: [String]
+106 |     var key: String
+    :
+203 |     }
+204 |     
+205 |     @Published var hotkeyTelescope: HotkeyConfig = HotkeyConfig(modifiers: ["ctrl", "alt"], key: "I") {
+    |                                     `- error: 'HotkeyConfig' is ambiguous for type lookup in this context
+206 |         didSet { 
+207 |             saveHotkeys()
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:104:8: note: found this candidate
+102 | 
+103 | // 快捷键模型
+104 | struct HotkeyConfig: Codable, Equatable {
+    |        `- note: found this candidate
+105 |     var modifiers: [String]
+106 |     var key: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:220:48: error: 'WallpaperHistoryEntry' is ambiguous for type lookup in this context
+ 56 | }
+ 57 | 
+ 58 | struct WallpaperHistoryEntry: Codable, Equatable {
+    |        `- note: found this candidate
+ 59 |     var photoId: String
+ 60 |     var timestamp: Date
+    :
+218 |         didSet { saveWallpaperSettings() }
+219 |     }
+220 |     @Published var wallpaperHistory: [String: [WallpaperHistoryEntry]] = [:] {
+    |                                                `- error: 'WallpaperHistoryEntry' is ambiguous for type lookup in this context
+221 |         didSet { saveWallpaperSettings() }
+222 |     }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:58:8: note: found this candidate
+ 56 | }
+ 57 | 
+ 58 | struct WallpaperHistoryEntry: Codable, Equatable {
+    |        `- note: found this candidate
+ 59 |     var photoId: String
+ 60 |     var timestamp: Date
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:224:39: error: 'ScreenInfo' is ambiguous for type lookup in this context
+ 50 | }
+ 51 | 
+ 52 | struct ScreenInfo: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 53 |     var id: String { uuid }
+ 54 |     var uuid: String
+    :
+222 |     }
+223 |     
+224 |     @Published var connectedScreens: [ScreenInfo] = []
+    |                                       `- error: 'ScreenInfo' is ambiguous for type lookup in this context
+225 |     
+226 |     // Config read from ~/.config/taichi/wallpaper.json
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:52:8: note: found this candidate
+ 50 | }
+ 51 | 
+ 52 | struct ScreenInfo: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 53 |     var id: String { uuid }
+ 54 |     var uuid: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:227:43: error: 'WallpaperEngineConfig' is ambiguous for type lookup in this context
+ 63 | }
+ 64 | 
+ 65 | struct WallpaperEngineConfig: Codable, Equatable {
+    |        `- note: found this candidate
+ 66 |     struct SourceConfig: Codable, Equatable {
+ 67 |         var key: String?
+    :
+225 |     
+226 |     // Config read from ~/.config/taichi/wallpaper.json
+227 |     @Published var wallpaperEngineConfig: WallpaperEngineConfig = WallpaperEngineConfig() {
+    |                                           `- error: 'WallpaperEngineConfig' is ambiguous for type lookup in this context
+228 |         didSet { saveWallpaperEngineConfig() }
+229 |     }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:65:8: note: found this candidate
+ 63 | }
+ 64 | 
+ 65 | struct WallpaperEngineConfig: Codable, Equatable {
+    |        `- note: found this candidate
+ 66 |     struct SourceConfig: Codable, Equatable {
+ 67 |         var key: String?
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:231:41: error: 'MonitoredApp' is ambiguous for type lookup in this context
+ 18 | }
+ 19 | 
+ 20 | struct MonitoredApp: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 21 |     var id: String // Bundle Identifier
+ 22 |     var name: String
+    :
+229 |     }
+230 |     
+231 |     @Published var activeInjectedApps: [MonitoredApp] = [] {
+    |                                         `- error: 'MonitoredApp' is ambiguous for type lookup in this context
+232 |         didSet { saveActiveInjectedApps() }
+233 |     }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:20:8: note: found this candidate
+ 18 | }
+ 19 | 
+ 20 | struct MonitoredApp: Identifiable, Codable, Equatable {
+    |        `- note: found this candidate
+ 21 |     var id: String // Bundle Identifier
+ 22 |     var name: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:111:25: error: ambiguous use of 'init()'
+109 | @MainActor
+110 | class TaiChiSettings: ObservableObject {
+111 |     static let shared = TaiChiSettings()
+    |                         `- error: ambiguous use of 'init()'
+112 |     
+113 |     private var isInitializing = true
+    :
+233 |     }
+234 |     
+235 |     init() {
+    |     `- note: found this candidate 
+236 |         loadSettings()
+237 |         
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:235:5: note: found this candidate 
+233 |     }
+234 |     
+235 |     init() {
+    |     `- note: found this candidate 
+236 |         loadSettings()
+237 |         
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:110:7: error: invalid redeclaration of 'TaiChiSettings'
+108 | 
+109 | @MainActor
+110 | class TaiChiSettings: ObservableObject {
+    |       `- error: invalid redeclaration of 'TaiChiSettings'
+111 |     static let shared = TaiChiSettings()
+112 |     
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:303:42: error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+301 |     private func loadSettings() {
+302 |         if let data = UserDefaults.standard.data(forKey: "residentApps"),
+303 |            let apps = try? JSONDecoder().decode([ResidentApp].self, from: data) {
+    |                                          `- error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+304 |             residentApps = apps
+305 |         }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:308:42: error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+306 |         
+307 |         if let data = UserDefaults.standard.data(forKey: "activeInjectedApps"),
+308 |            let apps = try? JSONDecoder().decode([MonitoredApp].self, from: data) {
+    |                                          `- error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+309 |             activeInjectedApps = apps
+310 |         }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:313:42: error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+311 |         
+312 |         if let data = UserDefaults.standard.data(forKey: "monitoredApps"),
+313 |            let apps = try? JSONDecoder().decode([MonitoredApp].self, from: data) {
+    |                                          `- error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+314 |             monitoredApps = apps
+315 |         } else {
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:323:42: error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+321 |         
+322 |         if let data = UserDefaults.standard.data(forKey: "floatingApps"),
+323 |            let apps = try? JSONDecoder().decode([FloatingApp].self, from: data) {
+    |                                          `- error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+324 |             floatingApps = apps
+325 |         }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:328:42: error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+326 |         
+327 |         if let data = UserDefaults.standard.data(forKey: "mediaApps"),
+328 |            let apps = try? JSONDecoder().decode([MediaApp].self, from: data) {
+    |                                          `- error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+329 |             mediaApps = apps
+330 |         }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:333:43: error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+331 |         
+332 |         if let data = UserDefaults.standard.data(forKey: "commonPaths"),
+333 |            let paths = try? JSONDecoder().decode([CommonPath].self, from: data) {
+    |                                           `- error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+334 |             commonPaths = paths
+335 |         }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:362:107: error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+360 |         if let dir = UserDefaults.standard.string(forKey: "wallpaperSaveDir") { wallpaperSaveDir = dir }
+361 |         if let data = UserDefaults.standard.data(forKey: "wallpaperChannels"), let ch = try? JSONDecoder().decode([String: [String]].self, from: data) { wallpaperChannels = ch }
+362 |         if let data = UserDefaults.standard.data(forKey: "wallpaperHistory"), let hs = try? JSONDecoder().decode([String: [WallpaperHistoryEntry]].self, from: data) { wallpaperHistory = hs }
+    |                                                                                                           `- error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+363 |         
+364 |         syncFromHSConfig()
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:382:46: error: 'HotkeyConfig' is ambiguous for type lookup in this context
+102 | 
+103 | // 快捷键模型
+104 | struct HotkeyConfig: Codable, Equatable {
+    |        `- note: found this candidate
+105 |     var modifiers: [String]
+106 |     var key: String
+    :
+380 |         var telescopeEnabled = false
+381 |         
+382 |         func parseHotkey(for key: String) -> HotkeyConfig? {
+    |                                              `- error: 'HotkeyConfig' is ambiguous for type lookup in this context
+383 |             // Regex to match: togglePin = {{"ctrl", "cmd"}, "H"}
+384 |             let pattern = "\(key)\\s*=\\s*\\{\\{([^}]+)\\}\\s*,\\s*\"([^\"]+)\"\\}"
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:104:8: note: found this candidate
+102 | 
+103 | // 快捷键模型
+104 | struct HotkeyConfig: Codable, Equatable {
+    |        `- note: found this candidate
+105 |     var modifiers: [String]
+106 |     var key: String
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:428:43: error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+426 |     private func loadActiveSMBMounts() {
+427 |         if let data = UserDefaults.standard.data(forKey: "activeSMBMounts"),
+428 |            let items = try? JSONDecoder().decode([SMBMountConfig].self, from: data) {
+    |                                           `- error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+429 |             activeSMBMounts = items
+430 |         }
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:5:7: error: invalid redeclaration of 'ProxyResponse'
+   3 | import Swifter
+   4 | 
+   5 | class ProxyResponse: @unchecked Sendable {
+     |       `- error: invalid redeclaration of 'ProxyResponse'
+   6 |     var data: Data?
+   7 |     var statusCode: Int = 500
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:10:7: error: invalid redeclaration of 'ServerManager'
+   8 | }
+   9 | 
+  10 | class ServerManager: @unchecked Sendable {
+     |       `- error: invalid redeclaration of 'ServerManager'
+  11 |     static let shared = ServerManager()
+  12 |     
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:111:25: error: ambiguous use of 'init()'
+109 | @MainActor
+110 | class TaiChiSettings: ObservableObject {
+111 |     static let shared = TaiChiSettings()
+    |                         `- error: ambiguous use of 'init()'
+112 |     
+113 |     private var isInitializing = true
+    :
+233 |     }
+234 |     
+235 |     init() {
+    |     `- note: found this candidate 
+236 |         loadSettings()
+237 |         
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:235:5: note: found this candidate 
+233 |     }
+234 |     
+235 |     init() {
+    |     `- note: found this candidate 
+236 |         loadSettings()
+237 |         
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift:111:25: error: ambiguous use of 'init()'
+109 | @MainActor
+110 | class TaiChiSettings: ObservableObject {
+111 |     static let shared = TaiChiSettings()
+    |                         `- error: ambiguous use of 'init()'
+112 |     
+113 |     private var isInitializing = true
+    :
+233 |     }
+234 |     
+235 |     init() {
+    |     `- note: found this candidate 
+236 |         loadSettings()
+237 |         
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift:235:5: note: found this candidate 
+233 |     }
+234 |     
+235 |     init() {
+    |     `- note: found this candidate 
+236 |         loadSettings()
+237 |         
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:41:45: error: reference to member 'shared' cannot be resolved without a contextual type
+  39 |         guard !isRunning else { return }
+  40 |         
+  41 |         let port = in_port_t(TaiChiSettings.shared.httpPort)
+     |                                             `- error: reference to member 'shared' cannot be resolved without a contextual type
+  42 |         do {
+  43 |             try server.start(port, forceIPv4: true)
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:57:21: warning: reference to captured var 'self' in concurrently-executing code [#SendableClosureCaptures]
+  55 |             wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: nil) { [weak self] _ in
+  56 |                 DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 3.0) {
+  57 |                     self?.reinjectActiveApps()
+     |                     `- warning: reference to captured var 'self' in concurrently-executing code [#SendableClosureCaptures]
+  58 |                 }
+  59 |             }
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:105:42: error: reference to member 'shared' cannot be resolved without a contextual type
+ 103 |     @MainActor
+ 104 |     private func startWorker() {
+ 105 |         let scriptsDir = (TaiChiSettings.shared.scriptsPath as NSString).expandingTildeInPath
+     |                                          `- error: reference to member 'shared' cannot be resolved without a contextual type
+ 106 |         let workerScriptPath = (scriptsDir as NSString).appendingPathComponent(".taichi_worker.js")
+ 107 |         
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:477:39: error: reference to member 'shared' cannot be resolved without a contextual type
+ 475 |     @MainActor
+ 476 |     private func updateListConfig(listName: String, action: String, paths: [String]) {
+ 477 |         let settings = TaiChiSettings.shared
+     |                                       `- error: reference to member 'shared' cannot be resolved without a contextual type
+ 478 |         
+ 479 |         // Helper to build App item
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:836:28: error: reference to member 'shared' cannot be resolved without a contextual type
+ 834 |         
+ 835 |         let activeInjectedAppIDs = DispatchQueue.main.sync { 
+ 836 |             TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+     |                            `- error: reference to member 'shared' cannot be resolved without a contextual type
+ 837 |         }
+ 838 |         let runningApps = NSWorkspace.shared.runningApplications
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:977:32: error: reference to member 'shared' cannot be resolved without a contextual type
+ 975 |             let appName = appURL?.deletingPathExtension().lastPathComponent ?? finalAppId
+ 976 |             DispatchQueue.main.async { [finalAppId] in
+ 977 |                 TaiChiSettings.shared.activeInjectedApps.removeAll(where: { $0.id == finalAppId })
+     |                                `- error: reference to member 'shared' cannot be resolved without a contextual type
+ 978 |             }
+ 979 |             Task {
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:990:28: error: reference to member 'shared' cannot be resolved without a contextual type
+ 988 |         
+ 989 |         let activeInjectedAppIDs = DispatchQueue.main.sync {
+ 990 |             TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+     |                            `- error: reference to member 'shared' cannot be resolved without a contextual type
+ 991 |         }
+ 992 |         
+
+Please submit a bug report (https://swift.org/contributing/#reporting-bugs) and include the crash backtrace.
+Stack dump:
+0.	Program arguments: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend -frontend -c /Users/kael/Projects/taichi_launcher/Sources/TaiChi/AudioKeepAliveManager.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/BrainManager.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Components.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/DiskMonitorTab.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/HSDeployer.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/HSManager.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/CGSSpace.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/DiskMonitorManager.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/ExpandedPanelView.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandManager.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandStateModel.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandView.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/LyricManager.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MarqueeText.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MediaObserver.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MenuBarLyricManager.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/ModeSwitcherView.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MountPanelView.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MultiAppListView.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/NotchShape.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/NotchSpaceManager.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/StandaloneLyricView.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/VisualEffectView.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Overlays.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Permissions.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/ScrollCatcherView.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager.swift -primary-file /Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/SettingsView.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/StringExtension.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/TaiChi.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/WallpaperManager.swift /Users/kael/Projects/taichi_launcher/Sources/TaiChi/WindowList.swift /Users/kael/Projects/taichi_launcher/.build/arm64-apple-macosx/debug/TaiChi.build/DerivedSources/resource_bundle_accessor.swift -emit-dependencies-path /Users/kael/Projects/taichi_launcher/.build/arm64-apple-macosx/debug/TaiChi.build/ServerManager_cyber_lazy_refresh_001.d -emit-reference-dependencies-path /Users/kael/Projects/taichi_launcher/.build/arm64-apple-macosx/debug/TaiChi.build/ServerManager_cyber_lazy_refresh_001.swiftdeps -serialize-diagnostics-path /Users/kael/Projects/taichi_launcher/.build/arm64-apple-macosx/debug/TaiChi.build/ServerManager_cyber_lazy_refresh_001.dia -target arm64-apple-macosx13.0 -Xllvm -aarch64-use-tbi -enable-objc-interop -stack-check -sdk /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk -I /Users/kael/Projects/taichi_launcher/.build/arm64-apple-macosx/debug/Modules -I /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib -F /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks -no-color-diagnostics -Xcc -fno-color-diagnostics -enable-testing -g -debug-info-format=dwarf -dwarf-version=4 -module-cache-path /Users/kael/Projects/taichi_launcher/.build/arm64-apple-macosx/debug/ModuleCache -swift-version 6 -Onone -D SWIFT_PACKAGE -D DEBUG -D SWIFT_MODULE_RESOURCE_BUNDLE_AVAILABLE -new-driver-path /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-driver -entry-point-function-name TaiChi_main -empty-abi-descriptor -plugin-path /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing -enable-anonymous-context-mangled-names -file-compilation-dir /Users/kael/Projects/taichi_launcher -Xcc -isysroot -Xcc /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk -Xcc -F -Xcc /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks -Xcc -fPIC -Xcc -g -no-auto-bridging-header-chaining -module-name TaiChi -package-name taichi_launcher -disable-clang-spi -target-sdk-version 26.5 -target-sdk-name macosx26.5 -external-plugin-path /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins#/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/bin/swift-plugin-server -external-plugin-path /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/local/lib/swift/host/plugins#/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/bin/swift-plugin-server -in-process-plugin-server-path /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/libSwiftInProcPluginServer.dylib -plugin-path /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins -plugin-path /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/local/lib/swift/host/plugins -o /Users/kael/Projects/taichi_launcher/.build/arm64-apple-macosx/debug/TaiChi.build/ServerManager_cyber_lazy_refresh_001.swift.o -index-store-path /Users/kael/Projects/taichi_launcher/.build/arm64-apple-macosx/debug/index/store -index-system-modules
+1.	Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)
+2.	Compiling with the current language version
+3.	While evaluating request TypeCheckPrimaryFileRequest(source_file "/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift")
+4.	While evaluating request TypeCheckFunctionBodyRequest(TaiChi.(file).ServerManager.performLauncherAction(action:appId:)@/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:966:18)
+5.	While type-checking statement at [/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:966:87 - line:1117:5] RangeText="{
+        let finalAppId = appId
+        let runningApps = NSWorkspace.shared.runningApplications
+        
+        if action == "quit" {
+            if let appToQuit = runningApps.first(where: { $0.bundleIdentifier == finalAppId }) {
+                appToQuit.terminate()
+            }
+            let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: finalAppId)
+            let appName = appURL?.deletingPathExtension().lastPathComponent ?? finalAppId
+            DispatchQueue.main.async { [finalAppId] in
+                TaiChiSettings.shared.activeInjectedApps.removeAll(where: { $0.id == finalAppId })
+            }
+            Task {
+                try? await HSManager.shared.sendAction(action: "hotkey.unregister", params: ["app": appName, "profileId": "taichi_inspector"])
+            }
+            return jsonResponse(["success": true, "action": "quit", "appId": finalAppId])
+        }
+        
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: finalAppId) else {
+            return jsonResponse(["error": "Application not found for bundle ID \(finalAppId)"], statusCode: 404)
+        }
+        
+        let activeInjectedAppIDs = DispatchQueue.main.sync {
+            TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+        }
+        
+        let isRunning = runningApps.contains(where: { $0.bundleIdentifier == finalAppId })
+        let isInjected = activeInjectedAppIDs.contains(finalAppId)
+        
+        if isInjected {
+            // Case A: Already injected. Just bring to front.
+            if let app = runningApps.first(where: { $0.bundleIdentifier == finalAppId }) {
+                app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+            } else {
+                // Not actually running? Clean up state.
+                let appName = appURL.deletingPathExtension().lastPathComponent
+                DispatchQueue.main.async { [finalAppId] in
+                    TaiChiSettings.shared.activeInjectedApps.removeAll(where: { $0.id == finalAppId })
+                }
+                Task {
+                    try? await HSManager.shared.sendAction(action: "hotkey.unregister", params: ["app": appName, "profileId": "taichi_inspector"])
+                }
+            }
+            return jsonResponse(["success": true, "action": "activate", "appId": finalAppId])
+        }
+        
+        // Helper to launch with CDP
+        let launchWithCDP: @Sendable () -> Void = { [weak self, finalAppId, appURL] in
+            guard let self = self else { return }
+            let targetPort = self.findAvailablePort(startPort: 9222)
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.arguments = ["--remote-debugging-port=\(targetPort)"]
+            configuration.activates = true
+            
+            NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { [weak self] (app: NSRunningApplication?, error: Error?) in
+                if let error = error {
+                    print("❌ Failed to open \(finalAppId): \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let self = self, let workerPort = self.workerPort else { return }
+                let appName = app?.localizedName ?? appURL.deletingPathExtension().lastPathComponent
+                let pid = app?.processIdentifier
+                
+                DispatchQueue.main.async { [finalAppId, appName, pid, targetPort] in
+                    let monitoredApp = MonitoredApp(id: finalAppId, name: appName, path: appURL.path, pid: pid, port: targetPort)
+                    if let index = TaiChiSettings.shared.activeInjectedApps.firstIndex(where: { $0.id == finalAppId }) {
+                        var existingApp = TaiChiSettings.shared.activeInjectedApps[index]
+                        existingApp.pid = pid
+                        existingApp.port = targetPort
+                        TaiChiSettings.shared.activeInjectedApps[index] = existingApp
+                    } else {
+                        TaiChiSettings.shared.activeInjectedApps.append(monitoredApp)
+                        
+                        // [Bug Fix]
+                        // 1. Problem: 临时注入应用时，寻星镜快捷键被硬编码为 `cmd + alt + I`。这会导致如果目标应用（如 Antigravity 这种 Electron 应用）在全局静默拦截了默认的开发者工具快捷键，寻星镜就无法激活。
+                        // 2. Resolution: 移除硬编码，改为动态读取用户在前端配置好的 `TaiChiSettings.shared.hotkeyTelescope`，从而允许用户避开冲突的热键组合。
+                        // 3. Caveats: 确保该 `hotkeyTelescope` 与 `taichi_env.lua` 中的配置保持一致，且避免用户不小心在此处配置了其他已被严重拦截的原生快捷键。
+                        let hotkey = TaiChiSettings.shared.hotkeyTelescope
+                        Task {
+                            let bindings: [[String: Any]] = [
+                                [
+                                    "mods": hotkey.modifiers,
+                                    "key": hotkey.key,
+                                    "type": "lua",
+                                    "luaAction": "taichi.triggerInspector"
+                                ]
+                            ]
+                            let params: [String: Any] = [
+                                "app": appName,
+                                "profileId": "taichi_inspector",
+                                "bindings": bindings
+                            ]
+                            try? await HSManager.shared.sendAction(action: "hotkey.register", params: params)
+                        }
+                    }
+                }
+                
+                // Wait slightly to ensure app starts and CDP is up
+                DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [finalAppId] in
+                    print("🚀 \(finalAppId) launched on CDP port \(targetPort). Invoking worker...")
+                    var components = URLComponents()
+                    components.scheme = "http"
+                    components.host = "127.0.0.1"
+                    components.port = workerPort
+                    components.path = "/script/apps/\(finalAppId)/worker/index"
+                    components.queryItems = [URLQueryItem(name: "port", value: String(targetPort))]
+                    
+                    if let url = components.url {
+                        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+                            if let error = error {
+                                print("⚠️ Worker trigger failed for \(finalAppId): \(error.localizedDescription)")
+                            } else if let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 {
+                                print("✅ Worker trigger succeeded for \(finalAppId)")
+                            } else {
+                                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                                print("⚠️ Worker trigger returned status \(statusCode)")
+                            }
+                        }
+                        task.resume()
+                    }
+                }
+            }
+        }
+        
+        if isRunning {
+            // Case C: Running but not injected. Force quit and relaunch.
+            if let appToQuit = runningApps.first(where: { $0.bundleIdentifier == finalAppId }) {
+                appToQuit.terminate()
+                
+                // Poll until the app is actually dead, then launch
+                DispatchQueue.global().async { [launchWithCDP] in
+                    var attempts = 0
+                    while !appToQuit.isTerminated && attempts < 20 {
+                        Thread.sleep(forTimeInterval: 0.25)
+                        attempts += 1
+                    }
+                    if !appToQuit.isTerminated {
+                        appToQuit.forceTerminate()
+                        Thread.sleep(forTimeInterval: 0.5)
+                    }
+                    launchWithCDP()
+                }
+            }
+            return jsonResponse(["success": true, "action": "relaunch_inject", "appId": finalAppId])
+        } else {
+            // Case B: Not running.
+            launchWithCDP()
+            return jsonResponse(["success": true, "action": "launch_inject", "appId": finalAppId])
+        }
+    "
+6.	While type-checking declaration 0xb79457398 (at /Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:1014:9)
+7.	While type-checking expression at [/Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:1014:51 - line:1090:9] RangeText="{ [weak self, finalAppId, appURL] in
+            guard let self = self else { return }
+            let targetPort = self.findAvailablePort(startPort: 9222)
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.arguments = ["--remote-debugging-port=\(targetPort)"]
+            configuration.activates = true
+            
+            NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { [weak self] (app: NSRunningApplication?, error: Error?) in
+                if let error = error {
+                    print("❌ Failed to open \(finalAppId): \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let self = self, let workerPort = self.workerPort else { return }
+                let appName = app?.localizedName ?? appURL.deletingPathExtension().lastPathComponent
+                let pid = app?.processIdentifier
+                
+                DispatchQueue.main.async { [finalAppId, appName, pid, targetPort] in
+                    let monitoredApp = MonitoredApp(id: finalAppId, name: appName, path: appURL.path, pid: pid, port: targetPort)
+                    if let index = TaiChiSettings.shared.activeInjectedApps.firstIndex(where: { $0.id == finalAppId }) {
+                        var existingApp = TaiChiSettings.shared.activeInjectedApps[index]
+                        existingApp.pid = pid
+                        existingApp.port = targetPort
+                        TaiChiSettings.shared.activeInjectedApps[index] = existingApp
+                    } else {
+                        TaiChiSettings.shared.activeInjectedApps.append(monitoredApp)
+                        
+                        // [Bug Fix]
+                        // 1. Problem: 临时注入应用时，寻星镜快捷键被硬编码为 `cmd + alt + I`。这会导致如果目标应用（如 Antigravity 这种 Electron 应用）在全局静默拦截了默认的开发者工具快捷键，寻星镜就无法激活。
+                        // 2. Resolution: 移除硬编码，改为动态读取用户在前端配置好的 `TaiChiSettings.shared.hotkeyTelescope`，从而允许用户避开冲突的热键组合。
+                        // 3. Caveats: 确保该 `hotkeyTelescope` 与 `taichi_env.lua` 中的配置保持一致，且避免用户不小心在此处配置了其他已被严重拦截的原生快捷键。
+                        let hotkey = TaiChiSettings.shared.hotkeyTelescope
+                        Task {
+                            let bindings: [[String: Any]] = [
+                                [
+                                    "mods": hotkey.modifiers,
+                                    "key": hotkey.key,
+                                    "type": "lua",
+                                    "luaAction": "taichi.triggerInspector"
+                                ]
+                            ]
+                            let params: [String: Any] = [
+                                "app": appName,
+                                "profileId": "taichi_inspector",
+                                "bindings": bindings
+                            ]
+                            try? await HSManager.shared.sendAction(action: "hotkey.register", params: params)
+                        }
+                    }
+                }
+                
+                // Wait slightly to ensure app starts and CDP is up
+                DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [finalAppId] in
+                    print("🚀 \(finalAppId) launched on CDP port \(targetPort). Invoking worker...")
+                    var components = URLComponents()
+                    components.scheme = "http"
+                    components.host = "127.0.0.1"
+                    components.port = workerPort
+                    components.path = "/script/apps/\(finalAppId)/worker/index"
+                    components.queryItems = [URLQueryItem(name: "port", value: String(targetPort))]
+                    
+                    if let url = components.url {
+                        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+                            if let error = error {
+                                print("⚠️ Worker trigger failed for \(finalAppId): \(error.localizedDescription)")
+                            } else if let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 {
+                                print("✅ Worker trigger succeeded for \(finalAppId)")
+                            } else {
+                                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                                print("⚠️ Worker trigger returned status \(statusCode)")
+                            }
+                        }
+                        task.resume()
+                    }
+                }
+            }
+        "
+8.	While type-checking-target starting at /Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift:1014:51
+Stack dump without symbol names (ensure you have llvm-symbolizer in your PATH or set the environment var `LLVM_SYMBOLIZER_PATH` to point to it):
+0  swift-frontend           0x000000010980908c llvm::sys::PrintStackTrace(llvm::raw_ostream&, int) + 56
+1  swift-frontend           0x000000010980652c llvm::sys::RunSignalHandlers() + 172
+2  swift-frontend           0x000000010980967c SignalHandler(int, __siginfo*, void*) + 356
+3  libsystem_platform.dylib 0x000000018e355744 _sigtramp + 56
+4  swift-frontend           0x000000010450f268 (anonymous namespace)::ExprWalker::rewriteTarget(swift::constraints::SyntacticElementTarget) + 2948
+5  swift-frontend           0x000000010450eb14 (anonymous namespace)::ExprWalker::rewriteTarget(swift::constraints::SyntacticElementTarget) + 1072
+6  swift-frontend           0x000000010455ed90 swift::ASTVisitor<(anonymous namespace)::SyntacticElementSolutionApplication, void, swift::ASTNode, void, void, void, void>::visit(swift::Stmt*) + 2808
+7  swift-frontend           0x000000010455e88c swift::ASTVisitor<(anonymous namespace)::SyntacticElementSolutionApplication, void, swift::ASTNode, void, void, void, void>::visit(swift::Stmt*) + 1524
+8  swift-frontend           0x000000010455ca20 swift::constraints::ConstraintSystem::applySolution(swift::AnyFunctionRef, swift::constraints::SyntacticElementTargetRewriter&) + 2148
+9  swift-frontend           0x000000010451439c (anonymous namespace)::ExprWalker::walkToExprPre(swift::Expr*) + 80
+10 swift-frontend           0x0000000104bfb60c (anonymous namespace)::Traversal::visitCaptureListExpr(swift::CaptureListExpr*) + 112
+11 swift-frontend           0x0000000104bfa820 (anonymous namespace)::Traversal::visit(swift::Expr*) + 420
+12 swift-frontend           0x0000000104c00838 (anonymous namespace)::Traversal::visit(swift::ArgumentList*) + 260
+13 swift-frontend           0x0000000104bfd1ac (anonymous namespace)::Traversal::visitApplyExpr(swift::ApplyExpr*) + 196
+14 swift-frontend           0x0000000104bfa6d0 (anonymous namespace)::Traversal::visit(swift::Expr*) + 84
+15 swift-frontend           0x000000010450ec70 (anonymous namespace)::ExprWalker::rewriteTarget(swift::constraints::SyntacticElementTarget) + 1420
+16 swift-frontend           0x000000010455e21c (anonymous namespace)::SyntacticElementSolutionApplication::visitBraceElement(swift::ASTNode) + 440
+17 swift-frontend           0x000000010455e88c swift::ASTVisitor<(anonymous namespace)::SyntacticElementSolutionApplication, void, swift::ASTNode, void, void, void, void>::visit(swift::Stmt*) + 1524
+18 swift-frontend           0x000000010455ca20 swift::constraints::ConstraintSystem::applySolution(swift::AnyFunctionRef, swift::constraints::SyntacticElementTargetRewriter&) + 2148
+19 swift-frontend           0x000000010451439c (anonymous namespace)::ExprWalker::walkToExprPre(swift::Expr*) + 80
+20 swift-frontend           0x0000000104bfb60c (anonymous namespace)::Traversal::visitCaptureListExpr(swift::CaptureListExpr*) + 112
+21 swift-frontend           0x0000000104bfa820 (anonymous namespace)::Traversal::visit(swift::Expr*) + 420
+22 swift-frontend           0x0000000104c00838 (anonymous namespace)::Traversal::visit(swift::ArgumentList*) + 260
+23 swift-frontend           0x0000000104bfd1ac (anonymous namespace)::Traversal::visitApplyExpr(swift::ApplyExpr*) + 196
+24 swift-frontend           0x0000000104bfa6d0 (anonymous namespace)::Traversal::visit(swift::Expr*) + 84
+25 swift-frontend           0x000000010450ec70 (anonymous namespace)::ExprWalker::rewriteTarget(swift::constraints::SyntacticElementTarget) + 1420
+26 swift-frontend           0x000000010455e21c (anonymous namespace)::SyntacticElementSolutionApplication::visitBraceElement(swift::ASTNode) + 440
+27 swift-frontend           0x000000010455e88c swift::ASTVisitor<(anonymous namespace)::SyntacticElementSolutionApplication, void, swift::ASTNode, void, void, void, void>::visit(swift::Stmt*) + 1524
+28 swift-frontend           0x000000010455ca20 swift::constraints::ConstraintSystem::applySolution(swift::AnyFunctionRef, swift::constraints::SyntacticElementTargetRewriter&) + 2148
+29 swift-frontend           0x000000010451439c (anonymous namespace)::ExprWalker::walkToExprPre(swift::Expr*) + 80
+30 swift-frontend           0x0000000104bfb60c (anonymous namespace)::Traversal::visitCaptureListExpr(swift::CaptureListExpr*) + 112
+31 swift-frontend           0x0000000104bfa820 (anonymous namespace)::Traversal::visit(swift::Expr*) + 420
+32 swift-frontend           0x000000010450ec70 (anonymous namespace)::ExprWalker::rewriteTarget(swift::constraints::SyntacticElementTarget) + 1420
+33 swift-frontend           0x000000010450e360 swift::constraints::ConstraintSystem::applySolution(swift::constraints::Solution&, swift::constraints::SyntacticElementTarget) + 7124
+34 swift-frontend           0x00000001047fbcb0 swift::TypeChecker::typeCheckTarget(swift::constraints::SyntacticElementTarget&, swift::optionset::OptionSet<swift::TypeCheckExprFlags, unsigned int>, swift::DiagnosticTransaction*) + 1920
+35 swift-frontend           0x00000001047fb4d0 swift::TypeChecker::typeCheckExpression(swift::constraints::SyntacticElementTarget&, swift::optionset::OptionSet<swift::TypeCheckExprFlags, unsigned int>, swift::DiagnosticTransaction*) + 400
+36 swift-frontend           0x00000001047fda44 swift::TypeChecker::typeCheckBinding(swift::Pattern*&, swift::Expr*&, swift::DeclContext*, swift::Type, swift::PatternBindingDecl*, unsigned int, swift::optionset::OptionSet<swift::TypeCheckExprFlags, unsigned int>) + 184
+37 swift-frontend           0x00000001047fdbb4 swift::TypeChecker::typeCheckPatternBinding(swift::PatternBindingDecl*, unsigned int, swift::Type, swift::optionset::OptionSet<swift::TypeCheckExprFlags, unsigned int>) + 236
+38 swift-frontend           0x000000010485abfc (anonymous namespace)::DeclChecker::visit(swift::Decl*) + 7456
+39 swift-frontend           0x000000010490b884 (anonymous namespace)::StmtChecker::typeCheckASTNode(swift::ASTNode&) + 980
+40 swift-frontend           0x0000000104910314 swift::ASTVisitor<(anonymous namespace)::StmtChecker, void, swift::Stmt*, void, void, void, void>::visit(swift::Stmt*) + 300
+41 swift-frontend           0x000000010490e130 bool (anonymous namespace)::StmtChecker::typeCheckStmt<swift::BraceStmt>(swift::BraceStmt*&) + 292
+42 swift-frontend           0x000000010490d158 swift::TypeCheckFunctionBodyRequest::evaluate(swift::Evaluator&, swift::AbstractFunctionDecl*) const + 2284
+43 swift-frontend           0x0000000104d6ed94 swift::TypeCheckFunctionBodyRequest::OutputType swift::Evaluator::getResultUncached<swift::TypeCheckFunctionBodyRequest, swift::TypeCheckFunctionBodyRequest::OutputType swift::evaluateOrDefault<swift::TypeCheckFunctionBodyRequest>(swift::Evaluator&, swift::TypeCheckFunctionBodyRequest, swift::TypeCheckFunctionBodyRequest::OutputType)::'lambda'()>(swift::TypeCheckFunctionBodyRequest const&, swift::TypeCheckFunctionBodyRequest::OutputType swift::evaluateOrDefault<swift::TypeCheckFunctionBodyRequest>(swift::Evaluator&, swift::TypeCheckFunctionBodyRequest, swift::TypeCheckFunctionBodyRequest::OutputType)::'lambda'()) + 680
+44 swift-frontend           0x0000000104cc0250 swift::AbstractFunctionDecl::getTypecheckedBody() const + 152
+45 swift-frontend           0x000000010495e118 swift::TypeCheckPrimaryFileRequest::evaluate(swift::Evaluator&, swift::SourceFile*) const + 1276
+46 swift-frontend           0x00000001049673b0 swift::TypeCheckPrimaryFileRequest::OutputType swift::Evaluator::getResultUncached<swift::TypeCheckPrimaryFileRequest, swift::TypeCheckPrimaryFileRequest::OutputType swift::evaluateOrDefault<swift::TypeCheckPrimaryFileRequest>(swift::Evaluator&, swift::TypeCheckPrimaryFileRequest, swift::TypeCheckPrimaryFileRequest::OutputType)::'lambda'()>(swift::TypeCheckPrimaryFileRequest const&, swift::TypeCheckPrimaryFileRequest::OutputType swift::evaluateOrDefault<swift::TypeCheckPrimaryFileRequest>(swift::Evaluator&, swift::TypeCheckPrimaryFileRequest, swift::TypeCheckPrimaryFileRequest::OutputType)::'lambda'()) + 644
+47 swift-frontend           0x00000001037966e4 bool llvm::function_ref<bool (swift::SourceFile&)>::callback_fn<swift::CompilerInstance::performSema()::$_0>(long, swift::SourceFile&) + 156
+48 swift-frontend           0x000000010378fa04 swift::CompilerInstance::forEachFileToTypeCheck(llvm::function_ref<bool (swift::SourceFile&)>) + 176
+49 swift-frontend           0x000000010378f894 swift::CompilerInstance::performSema() + 456
+50 swift-frontend           0x0000000103377608 performCompile(swift::CompilerInstance&, int&, swift::FrontendObserver*, llvm::ArrayRef<char const*>) + 548
+51 swift-frontend           0x0000000103374818 swift::performFrontend(llvm::ArrayRef<char const*>, char const*, void*, swift::FrontendObserver*) + 3308
+52 swift-frontend           0x00000001032f4424 swift::mainEntry(int, char const**) + 5224
+53 dyld                     0x000000018df804e4 start + 6992

@@ -199,6 +199,7 @@ struct ExpandedPanelView: View {
         .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
         .onReceive(timer) { _ in
             guard !isDraggingProgress else { return }
+            guard mediaObserver.state.isPlaying else { return }
             
             // Sync with the actual computed time every tick
             let actualTime = mediaObserver.state.currentElapsedTime

@@ -252,8 +252,11 @@ public class IslandManager: NSObject, NSWindowDelegate {
         let screens = NSScreen.screens
         
         var isMainHovered = false
+        var isNotchHovered = false
         var isLyricHovered = false
         var isMultiAppHovered = false
+        var isCenterNotchHovered = false
+        var isHoveringIcons = false
         
         let isVisibleDueToApps = isIslandVisibleDueToApps()
         
@@ -276,15 +279,24 @@ public class IslandManager: NSObject, NSWindowDelegate {
             
             // Second stage hover: Physical notch area (~36px height)
             let notchMinY = mainScreen.frame.maxY - 36
-            let isNotchHovered = mouseLocation.x >= minX && mouseLocation.x <= maxX && mouseLocation.y >= notchMinY
+            isNotchHovered = mouseLocation.x >= minX && mouseLocation.x <= maxX && mouseLocation.y >= notchMinY
             
             // But we don't want the bottom popped-out part to count as notchHovered
             // So if mouse Y is lower than notchMinY, it's not notchHovered.
             stateModel.isNotchHovered = isNotchHovered
             
             isMainHovered = mouseLocation.x >= minX && mouseLocation.x <= maxX && mouseLocation.y >= minY
+            
+            let centerMinX = mainScreen.frame.midX - 95
+            let centerMaxX = mainScreen.frame.midX + 95
+            isCenterNotchHovered = isMainHovered && (mouseLocation.x >= centerMinX && mouseLocation.x <= centerMaxX)
+            
+            let isAnyHovered = isMainHovered || isNotchHovered
+            isHoveringIcons = isAnyHovered && !isCenterNotchHovered
         }
         
+        stateModel.isCenterNotchHovered = isCenterNotchHovered
+        stateModel.isHoveringIcons = isHoveringIcons
         if stateModel.isLyricDetached, let lIndex = stateModel.lyricScreenIndex, lIndex < screens.count {
             let lScreen = screens[lIndex]
             let hitWidth: CGFloat = 390
@@ -307,14 +319,15 @@ public class IslandManager: NSObject, NSWindowDelegate {
             self.lastIsVisibleDueToApps = isVisibleDueToApps
         }
         
-        if stateModel.isHovering != isMainHovered || visibilityChanged {
-            stateModel.isHovering = isMainHovered
+        let effectiveHover = isMainHovered || isNotchHovered
+        if stateModel.isHovering != effectiveHover || visibilityChanged {
+            stateModel.isHovering = effectiveHover
             DispatchQueue.main.async { [weak self] in
                 self?.positionWindow()
             }
         }
         
-        setPanelFocusedState(isMainHovered || isMultiAppHovered)
+        setPanelFocusedState(effectiveHover || isMultiAppHovered)
         
         if let lyricWindow = lyricWindow {
             if lyricWindow.ignoresMouseEvents != !isLyricHovered {
@@ -466,8 +479,8 @@ public class IslandManager: NSObject, NSWindowDelegate {
             window.alphaValue = 0.0
         }
         
-        if window.ignoresMouseEvents {
-            window.ignoresMouseEvents = false
+        if window.ignoresMouseEvents != !focused {
+            window.ignoresMouseEvents = !focused
         }
     }
 }

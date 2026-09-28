@@ -60,7 +60,7 @@ class ServerManager: @unchecked Sendable {
             
             // Auto-discover and re-inject apps on startup
             DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                self?.discoverRunningInjectedApps()
+                self?.refreshCyberAppsStatus()
             }
         } catch {
             print("❌ Failed to start TaiChi Gateway: \(error)")
@@ -170,6 +170,18 @@ class ServerManager: @unchecked Sendable {
                     } else if !line.isEmpty {
                         print("[Worker] \(line)")
                     }
+                }
+            }
+        }
+        
+        process.terminationHandler = { [weak self] process in
+            print("⚠️ Node Worker terminated unexpectedly with status \(process.terminationStatus)")
+            DispatchQueue.main.async {
+                // Check if this is still the active process before restarting
+                if self?.workerProcess == process {
+                    self?.workerPort = nil
+                    print("🔄 Auto-restarting Node Worker...")
+                    self?.startWorker()
                 }
             }
         }
@@ -285,46 +297,20 @@ class ServerManager: @unchecked Sendable {
         }
     }
     
-    private func discoverRunningInjectedApps() {
-        print("🔍 Scanning for previously injected apps...")
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = ["-c", "ps x -o pid,command | grep -- '--remote-debugging-port=' | grep -v grep"]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        try? task.run()
-        task.waitUntilExit()
-        
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        var discoveredAppIDs: [String] = []
-        
-        if let output = String(data: data, encoding: .utf8) {
-            let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
-            let runningApps = NSWorkspace.shared.runningApplications
-            
-            for line in lines {
-                let parts = line.trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1)
-                if parts.count == 2, let pidString = parts.first, let pid = pid_t(pidString) {
-                    if let app = runningApps.first(where: { $0.processIdentifier == pid }), let bundleId = app.bundleIdentifier {
-                        discoveredAppIDs.append(bundleId)
-                    }
-                }
-            }
-        }
-        
+    private func refreshCyberAppsStatus() {
+        print("🔍 Refreshing Cyber apps status...")
         DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             let settings = TaiChiSettings.shared
-            let runningApps = NSWorkspace.shared.runningApplications
+            var updatedApps = [MonitoredApp]()
             
-            for appId in discoveredAppIDs {
-                if !settings.activeInjectedApps.contains(where: { $0.id == appId }) {
-                    if let app = runningApps.first(where: { $0.bundleIdentifier == appId }), let url = app.bundleURL {
-                        let appName = app.localizedName ?? appId
-                        let monitored = MonitoredApp(id: appId, name: appName, path: url.path)
-                        settings.activeInjectedApps.append(monitored)
-                        print("🔍 Auto-discovered running injected app: \(appName) (\(appId))")
+            for app in settings.activeInjectedApps {
+                if let pid = app.pid, kill(pid, 0) == 0 {
+                    updatedApps.append(app)
+                    
+                    if let workerPort = self.workerPort, let targetPort = app.port {
+                        print("🔄 Re-invoking worker for \(app.id) on port \(targetPort)...")
                         
-                        // Register Hotkey Telescope if needed
                         let hotkey = settings.hotkeyTelescope
                         Task {
                             let bindings: [[String: Any]] = [
@@ -336,18 +322,39 @@ class ServerManager: @unchecked Sendable {
                                 ]
                             ]
                             let params: [String: Any] = [
-                                "app": appName,
+                                "app": app.name,
                                 "profileId": "taichi_inspector",
                                 "bindings": bindings
                             ]
                             try? await HSManager.shared.sendAction(action: "hotkey.register", params: params)
                         }
+                        
+                        DispatchQueue.global(qos: .background).async {
+                            var components = URLComponents()
+                            components.scheme = "http"
+                            components.host = "127.0.0.1"
+                            components.port = workerPort
+                            components.path = "/script/apps/\(app.id)/worker/index"
+                            components.queryItems = [URLQueryItem(name: "port", value: String(targetPort))]
+                            
+                            if let url = components.url {
+                                let task = URLSession.shared.dataTask(with: url) { _, response, error in
+                                    if let error = error {
+                                        print("⚠️ Refresh reinject failed for \(app.id): \(error.localizedDescription)")
+                                    } else if let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 {
+                                        print("✅ Refresh reinject succeeded for \(app.id)")
+                                    }
+                                }
+                                task.resume()
+                            }
+                        }
                     }
+                } else {
+                    print("🧹 Removing dead Cyber app: \(app.name)")
                 }
             }
             
-            // Always call reinjectActiveApps to ensure both old and newly discovered apps get re-connected
-            self?.reinjectActiveApps()
+            settings.activeInjectedApps = updatedApps
         }
     }
     
@@ -835,6 +842,8 @@ class ServerManager: @unchecked Sendable {
     // MARK: - Launcher API (Alfred)
     
     private func handleLauncherFilter(_ request: HttpRequest) -> HttpResponse {
+        refreshCyberAppsStatus()
+        
         let scriptsDir = DispatchQueue.main.sync { TaiChiSettings.shared.scriptsPath as NSString }.expandingTildeInPath
         let appsDir = (scriptsDir as NSString).appendingPathComponent("apps")
         
@@ -1036,10 +1045,16 @@ class ServerManager: @unchecked Sendable {
                 
                 guard let self = self, let workerPort = self.workerPort else { return }
                 let appName = app?.localizedName ?? appURL.deletingPathExtension().lastPathComponent
+                let pid = app?.processIdentifier
                 
-                DispatchQueue.main.async { [finalAppId, appName] in
-                    let monitoredApp = MonitoredApp(id: finalAppId, name: appName, path: appURL.path)
-                    if !TaiChiSettings.shared.activeInjectedApps.contains(where: { $0.id == finalAppId }) {
+                DispatchQueue.main.async { [finalAppId, appName, pid, targetPort] in
+                    let monitoredApp = MonitoredApp(id: finalAppId, name: appName, path: appURL.path, pid: pid, port: targetPort)
+                    if let index = TaiChiSettings.shared.activeInjectedApps.firstIndex(where: { $0.id == finalAppId }) {
+                        var existingApp = TaiChiSettings.shared.activeInjectedApps[index]
+                        existingApp.pid = pid
+                        existingApp.port = targetPort
+                        TaiChiSettings.shared.activeInjectedApps[index] = existingApp
+                    } else {
                         TaiChiSettings.shared.activeInjectedApps.append(monitoredApp)
                         
                         // [Bug Fix]

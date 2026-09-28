@@ -60,6 +60,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                 self.state.artist = ""
                 self.state.isPlaying = false
                 self.state.artworkData = nil
+                self.stopPoller()
             }
         }
     }
@@ -99,8 +100,11 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
     }
     
     private func startPoller() {
-        pollerTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.pollMediaApps()
+        guard state.isPlaying else { return }
+        if pollerTimer == nil {
+            pollerTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+                self?.pollMediaApps()
+            }
         }
     }
     
@@ -111,6 +115,10 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
     
     private func pollMediaApps() {
         Task { @MainActor in
+            guard self.state.isPlaying else {
+                self.stopPoller()
+                return
+            }
             let configuredApps = TaiChiSettings.shared.mediaApps
             guard !configuredApps.isEmpty else {
                 if !self.activeMediaApps.isEmpty {
@@ -210,6 +218,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
             guard message.type == "data", let payload = message.payload else { return }
             
             DispatchQueue.main.async {
+                let wasPlaying = self.state.isPlaying
                 var newState = self.state
                 
                 if let title = payload.title { newState.title = title }
@@ -241,12 +250,26 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                 newState.debugInfo = "Stream [diff:\(message.diff ?? false)] - Playing: \(newState.isPlaying)"
                 
                 self.state = newState
+                
+                if !wasPlaying && newState.isPlaying {
+                    if self.pollerTimer == nil {
+                        self.startPoller()
+                    }
+                } else if wasPlaying && !newState.isPlaying {
+                    let configuredApps = TaiChiSettings.shared.mediaApps
+                    if !configuredApps.isEmpty {
+                        Task.detached {
+                            self.performPolling(configuredApps: configuredApps)
+                        }
+                    }
+                    self.stopPoller()
+                }
             }
         } catch {
             print("Error parsing json: \(error)")
         }
     }
-    
+
     func sendCommand(_ commandId: Int, targetBundleId: String? = nil) {
         guard let resourcePath = Bundle.main.resourcePath else { return }
         
@@ -306,11 +329,28 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         case 5: keyCode = 18 // NX_KEYTYPE_PREVIOUS
         default: return
         }
-        let loc = NSEvent.mouseLocation
-        let eventDown = NSEvent.otherEvent(with: .systemDefined, location: loc, modifierFlags: NSEvent.ModifierFlags(rawValue: 0xA00), timestamp: 0, windowNumber: 0, context: nil, subtype: 8, data1: Int((keyCode << 16) | 0x0A), data2: -1)
-        let eventUp = NSEvent.otherEvent(with: .systemDefined, location: loc, modifierFlags: NSEvent.ModifierFlags(rawValue: 0xB00), timestamp: 0, windowNumber: 0, context: nil, subtype: 8, data1: Int((keyCode << 16) | 0x0B), data2: -1)
-        eventDown?.cgEvent?.post(tap: .cghidEventTap)
-        eventUp?.cgEvent?.post(tap: .cghidEventTap)
+        
+        // [BUG FIX: Mouse cursor warping/flickering to notch area]
+        // macOS HID event taps (cghidEventTap) for systemDefined events can physically warp the mouse cursor.
+        // Previously, `NSEvent.mouseLocation` (which uses a bottom-left origin) was passed here.
+        // However, passing NSEvent's bottom-left coordinates into a CGEvent (which expects top-left) 
+        // can cause the cursor to physically jump or "snap" to incorrect locations (e.g., the notch area) 
+        // upon clicking media controls, especially on multi-monitor setups.
+        // Fix: We fetch the precise real-time coordinate directly from the CGEvent coordinate space 
+        // (top-left origin) and explicitly assign it to the underlying CGEvent before posting.
+        let cgLoc = CGEvent(source: nil)?.location ?? .zero
+        
+        let eventDown = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: NSEvent.ModifierFlags(rawValue: 0xA00), timestamp: 0, windowNumber: 0, context: nil, subtype: 8, data1: Int((keyCode << 16) | 0x0A), data2: -1)
+        let eventUp = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: NSEvent.ModifierFlags(rawValue: 0xB00), timestamp: 0, windowNumber: 0, context: nil, subtype: 8, data1: Int((keyCode << 16) | 0x0B), data2: -1)
+        
+        if let cgDown = eventDown?.cgEvent {
+            cgDown.location = cgLoc
+            cgDown.post(tap: .cgSessionEventTap)
+        }
+        if let cgUp = eventUp?.cgEvent {
+            cgUp.location = cgLoc
+            cgUp.post(tap: .cgSessionEventTap)
+        }
     }
 
     func sendTargetedCommand(_ commandId: Int) {

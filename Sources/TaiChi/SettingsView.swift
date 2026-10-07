@@ -6,6 +6,7 @@ struct SettingsView: View {
     @ObservedObject var settings = TaiChiSettings.shared
     @State private var hasHammerspoon: Bool = false
     @State private var selectedTab: String = "basic"
+    @State private var hasMutagen: Bool = false
     
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -23,7 +24,7 @@ struct SettingsView: View {
                     .tag("hs")
             }
                 
-            SystemSettingsTab()
+            SystemSettingsTab(hasMutagen: $hasMutagen)
                 .tabItem {
                     Label("系统配置", systemImage: "gearshape.fill")
                 }
@@ -33,6 +34,7 @@ struct SettingsView: View {
         .frame(width: 600, height: 600)
         .onAppear {
             checkHammerspoon()
+            checkMutagen()
         }
     }
     
@@ -41,6 +43,15 @@ struct SettingsView: View {
             hasHammerspoon = true
         } else {
             hasHammerspoon = false
+        }
+    }
+    
+    private func checkMutagen() {
+        // Use MutagenManager to check install status
+        // Since we are in SettingsView which is outside Island folder, we should be able to access MutagenManager if it's public/internal
+        hasMutagen = MutagenManager.shared.checkInstallStatus()
+        if !hasMutagen {
+            settings.enableMutagen = false
         }
     }
 }
@@ -414,6 +425,7 @@ class HotkeyRecorderViewModel: ObservableObject {
 
 // MARK: - Tab 3: 系统配置
 struct SystemSettingsTab: View {
+    @Binding var hasMutagen: Bool
     @ObservedObject var settings = TaiChiSettings.shared
     @ObservedObject var permissions = PermissionsManager.shared
     
@@ -435,8 +447,20 @@ struct SystemSettingsTab: View {
             }
             .padding(.bottom, 10)
             
-            Section(header: Text("网络硬盘监控").font(.headline)) {
+            Section(header: Text("网络硬盘及同步 (Disk & Sync)").font(.headline)) {
                 DiskMonitorTab()
+                
+                HStack {
+                    Toggle("开启 Mutagen 同步面板", isOn: $settings.enableMutagen)
+                        .disabled(!hasMutagen)
+                    
+                    Spacer()
+                    if !hasMutagen {
+                        Text("未安装 Mutagen CLI")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                }
             }
             .padding(.bottom, 10)
             

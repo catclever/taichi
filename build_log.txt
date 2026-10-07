@@ -1,0 +1,369 @@
+Building Swift package...
+warning: 'taichi_launcher': found 15 file(s) which are unhandled; explicitly declare them as resources or exclude from the target
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandStateModel_hover_logic_001.swift.draft
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenPanelView.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandManager_hover_logic_001.swift.draft
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandView_hover_logic_001.swift.draft
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenManager.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandStateModel.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models_cyber_lazy_refresh_001.swift.draft
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager_cyber_lazy_refresh_001.swift.draft
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Models.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/ModeSwitcherView.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/ServerManager.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/SettingsView.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandManager.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Components.swift.bak
+    /Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/IslandView.swift.bak
+[0/1] Planning build
+Building for debugging...
+[0/4] Write swift-version--58304C5D6DBC2206.txt
+error: emit-module command failed with exit code 1 (use -v to see invocation)
+[2/6] Emitting module TaiChi
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/CGSSpace.swift:36:56: warning: main actor-isolated property 'windowNumber' can not be referenced from a nonisolated context
+34 | 
+35 |             CGSRemoveWindowsFromSpaces(_CGSDefaultConnection(),
+36 |                                        remove.map { $0.windowNumber } as NSArray,
+   |                                                        `- warning: main actor-isolated property 'windowNumber' can not be referenced from a nonisolated context
+37 |                                        [self.identifier])
+38 |             CGSAddWindowsToSpaces(_CGSDefaultConnection(),
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSWindow.h:339:32: note: property declared here
+ 337 | @property (nullable, strong) __kindof NSView *contentView;
+ 338 | @property (nullable, weak) id<NSWindowDelegate> delegate;
+ 339 | @property (readonly) NSInteger windowNumber;
+     |                                `- note: property declared here
+ 340 | 
+ 341 | /// @note The styleMask can only be set on macOS 10.6 and later. Valid \c styleMask settings have the same restrictions as the \c styleMask passed to `-initWithContentRect:styleMask:backing:defer:`.  Some \c styleMask changes will cause the view hierarchy to be rebuilt, since there is a different subclass for the top level view of a borderless window than for the top level view of a titled window.
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/CGSSpace.swift:39:48: warning: main actor-isolated property 'windowNumber' can not be referenced from a nonisolated context
+37 |                                        [self.identifier])
+38 |             CGSAddWindowsToSpaces(_CGSDefaultConnection(),
+39 |                                   add.map { $0.windowNumber } as NSArray,
+   |                                                `- warning: main actor-isolated property 'windowNumber' can not be referenced from a nonisolated context
+40 |                                   [self.identifier])
+41 |         }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSWindow.h:339:32: note: property declared here
+ 337 | @property (nullable, strong) __kindof NSView *contentView;
+ 338 | @property (nullable, weak) id<NSWindowDelegate> delegate;
+ 339 | @property (readonly) NSInteger windowNumber;
+     |                                `- note: property declared here
+ 340 | 
+ 341 | /// @note The styleMask can only be set on macOS 10.6 and later. Valid \c styleMask settings have the same restrictions as the \c styleMask passed to `-initWithContentRect:styleMask:backing:defer:`.  Some \c styleMask changes will cause the view hierarchy to be rebuilt, since there is a different subclass for the top level view of a borderless window than for the top level view of a titled window.
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:5:16: error: static property 'shared' is not concurrency-safe because non-'Sendable' type 'MutagenWindowManager' may have shared mutable state [#MutableGlobalVariable]
+ 2 | import AppKit
+ 3 | 
+ 4 | class MutagenWindowManager {
+   |       `- note: class 'MutagenWindowManager' does not conform to the 'Sendable' protocol
+ 5 |     static let shared = MutagenWindowManager()
+   |                |- error: static property 'shared' is not concurrency-safe because non-'Sendable' type 'MutagenWindowManager' may have shared mutable state [#MutableGlobalVariable]
+   |                |- note: add '@MainActor' to make static property 'shared' part of global actor 'MainActor'
+   |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 6 |     private var window: NSWindow?
+ 7 |     
+
+[#MutableGlobalVariable]: <https://docs.swift.org/compiler/documentation/diagnostics/mutable-global-variable>
+[3/6] Compiling TaiChi MutagenWindowManager.swift
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:5:16: error: static property 'shared' is not concurrency-safe because non-'Sendable' type 'MutagenWindowManager' may have shared mutable state [#MutableGlobalVariable]
+ 2 | import AppKit
+ 3 | 
+ 4 | class MutagenWindowManager {
+   |       `- note: class 'MutagenWindowManager' does not conform to the 'Sendable' protocol
+ 5 |     static let shared = MutagenWindowManager()
+   |                |- error: static property 'shared' is not concurrency-safe because non-'Sendable' type 'MutagenWindowManager' may have shared mutable state [#MutableGlobalVariable]
+   |                |- note: add '@MainActor' to make static property 'shared' part of global actor 'MainActor'
+   |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 6 |     private var window: NSWindow?
+ 7 |     
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:10:20: warning: call to main actor-isolated instance method 'makeKeyAndOrderFront' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+   |                    `- warning: call to main actor-isolated instance method 'makeKeyAndOrderFront' in a synchronous nonisolated context [#ActorIsolatedCall]
+11 |             NSApp.activate(ignoringOtherApps: true)
+12 |             return
+
+AppKit.NSWindow.makeKeyAndOrderFront:2:22: note: calls to instance method 'makeKeyAndOrderFront' from outside of its actor context are implicitly asynchronous
+1 | class NSWindow {
+2 | @MainActor open func makeKeyAndOrderFront(_ sender: Any?)}
+  |                      |- note: calls to instance method 'makeKeyAndOrderFront' from outside of its actor context are implicitly asynchronous
+  |                      `- note: main actor isolation inferred from inheritance from class 'NSResponder'
+3 | 
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:11:19: warning: call to main actor-isolated instance method 'activate(ignoringOtherApps:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+11 |             NSApp.activate(ignoringOtherApps: true)
+   |                   `- warning: call to main actor-isolated instance method 'activate(ignoringOtherApps:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+12 |             return
+13 |         }
+
+AppKit.NSApplication.activate:3:24: note: calls to instance method 'activate(ignoringOtherApps:)' from outside of its actor context are implicitly asynchronous
+1 | class NSApplication {
+2 | @available(macOS, introduced: 10.0, deprecated: 100000, message: "This method will be deprecated in a future release. Use NSApp.activate instead.")
+3 |   @MainActor open func activate(ignoringOtherApps ignoreOtherApps: Bool)}
+  |                        |- note: calls to instance method 'activate(ignoringOtherApps:)' from outside of its actor context are implicitly asynchronous
+  |                        `- note: main actor isolation inferred from inheritance from class 'NSResponder'
+4 | 
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:11:13: warning: main actor-isolated var 'NSApp' can not be referenced from a nonisolated context
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+11 |             NSApp.activate(ignoringOtherApps: true)
+   |             `- warning: main actor-isolated var 'NSApp' can not be referenced from a nonisolated context
+12 |             return
+13 |         }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSApplication.h:191:58: note: var declared here
+189 | @interface NSApplication : NSResponder <NSUserInterfaceValidations, NSMenuItemValidation, NSAccessibilityElement, NSAccessibility>
+190 | 
+191 | APPKIT_EXTERN __kindof NSApplication * _Null_unspecified NSApp NS_SWIFT_UI_ACTOR;
+    |                                                          `- note: var declared here
+192 | 
+193 | @property (class, readonly, strong) __kindof NSApplication *sharedApplication;
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:15:26: warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+   :
+13 |         }
+14 |         
+15 |         let configView = MutagenConfigView()
+   |                          `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+16 |         let newWindow = NSWindow(
+17 |             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenConfigView.swift:3:8: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+  1 | import SwiftUI
+  2 | 
+  3 | struct MutagenConfigView: View {
+    |        |- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+    |        `- note: main actor isolation inferred from conformance to protocol 'View'
+  4 |     @StateObject private var manager = MutagenManager.shared
+  5 |     @State private var selectedSessionId: String?
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:16:25: warning: call to main actor-isolated initializer 'init(contentRect:styleMask:backing:defer:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+   :
+14 |         
+15 |         let configView = MutagenConfigView()
+16 |         let newWindow = NSWindow(
+   |                         `- warning: call to main actor-isolated initializer 'init(contentRect:styleMask:backing:defer:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+17 |             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+18 |             styleMask: [.titled, .closable, .miniaturizable, .resizable],
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSWindow.h:293:1: note: calls to initializer 'init(contentRect:styleMask:backing:defer:)' from outside of its actor context are implicitly asynchronous
+ 291 | - (NSRect)contentRectForFrameRect:(NSRect)frameRect;
+ 292 | 
+ 293 | - (instancetype)initWithContentRect:(NSRect)contentRect styleMask:(NSWindowStyleMask)style backing:(NSBackingStoreType)backingStoreType defer:(BOOL)flag NS_DESIGNATED_INITIALIZER;
+     | |- note: calls to initializer 'init(contentRect:styleMask:backing:defer:)' from outside of its actor context are implicitly asynchronous
+     | `- note: main actor isolation inferred from inheritance from class 'NSResponder'
+ 294 | - (instancetype)initWithContentRect:(NSRect)contentRect styleMask:(NSWindowStyleMask)style backing:(NSBackingStoreType)backingStoreType defer:(BOOL)flag screen:(nullable NSScreen *)screen;
+ 295 | - (instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE; // Use initWithContentRect:. This method will throw an exception for coders that support allowsKeyedCoding, and is only available for compatibility with non keyed coding.
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:22:19: warning: main actor-isolated property 'title' can not be mutated from a nonisolated context
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+   :
+20 |             defer: false
+21 |         )
+22 |         newWindow.title = "Mutagen 配置"
+   |                   `- warning: main actor-isolated property 'title' can not be mutated from a nonisolated context
+23 |         newWindow.center()
+24 |         newWindow.contentView = NSHostingView(rootView: configView)
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSWindow.h:297:28: note: mutation of this property is only permitted within the actor
+ 295 | - (instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE; // Use initWithContentRect:. This method will throw an exception for coders that support allowsKeyedCoding, and is only available for compatibility with non keyed coding.
+ 296 | 
+ 297 | @property (copy) NSString *title;
+     |                            `- note: mutation of this property is only permitted within the actor
+ 298 | 
+ 299 | /*!
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:23:19: warning: call to main actor-isolated instance method 'center()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+   :
+21 |         )
+22 |         newWindow.title = "Mutagen 配置"
+23 |         newWindow.center()
+   |                   `- warning: call to main actor-isolated instance method 'center()' in a synchronous nonisolated context [#ActorIsolatedCall]
+24 |         newWindow.contentView = NSHostingView(rootView: configView)
+25 |         newWindow.isReleasedWhenClosed = false
+
+AppKit.NSWindow.center:2:22: note: calls to instance method 'center()' from outside of its actor context are implicitly asynchronous
+1 | class NSWindow {
+2 | @MainActor open func center()}
+  |                      |- note: calls to instance method 'center()' from outside of its actor context are implicitly asynchronous
+  |                      `- note: main actor isolation inferred from inheritance from class 'NSResponder'
+3 | 
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:24:19: warning: main actor-isolated property 'contentView' can not be mutated from a nonisolated context
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+   :
+22 |         newWindow.title = "Mutagen 配置"
+23 |         newWindow.center()
+24 |         newWindow.contentView = NSHostingView(rootView: configView)
+   |                   `- warning: main actor-isolated property 'contentView' can not be mutated from a nonisolated context
+25 |         newWindow.isReleasedWhenClosed = false
+26 |         
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSWindow.h:337:47: note: mutation of this property is only permitted within the actor
+ 335 | - (void)setTitleWithRepresentedFilename:(NSString *)filename;
+ 336 | @property (getter=isExcludedFromWindowsMenu) BOOL excludedFromWindowsMenu;
+ 337 | @property (nullable, strong) __kindof NSView *contentView;
+     |                                               `- note: mutation of this property is only permitted within the actor
+ 338 | @property (nullable, weak) id<NSWindowDelegate> delegate;
+ 339 | @property (readonly) NSInteger windowNumber;
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:24:33: warning: call to main actor-isolated initializer 'init(rootView:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+   :
+22 |         newWindow.title = "Mutagen 配置"
+23 |         newWindow.center()
+24 |         newWindow.contentView = NSHostingView(rootView: configView)
+   |                                 `- warning: call to main actor-isolated initializer 'init(rootView:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+25 |         newWindow.isReleasedWhenClosed = false
+26 |         
+
+SwiftUI.NSHostingView.init:2:44: note: calls to initializer 'init(rootView:)' from outside of its actor context are implicitly asynchronous
+1 | generic class NSHostingView {
+2 | @MainActor @preconcurrency required public init(rootView: Content)}
+  |                                            `- note: calls to initializer 'init(rootView:)' from outside of its actor context are implicitly asynchronous
+3 | 
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:25:19: warning: main actor-isolated property 'isReleasedWhenClosed' can not be mutated from a nonisolated context
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+   :
+23 |         newWindow.center()
+24 |         newWindow.contentView = NSHostingView(rootView: configView)
+25 |         newWindow.isReleasedWhenClosed = false
+   |                   `- warning: main actor-isolated property 'isReleasedWhenClosed' can not be mutated from a nonisolated context
+26 |         
+27 |         self.window = newWindow
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSWindow.h:393:46: note: mutation of this property is only permitted within the actor
+ 391 | @property (readonly) NSEventModifierFlags resizeFlags;
+ 392 | - (void)close;
+ 393 | @property (getter=isReleasedWhenClosed) BOOL releasedWhenClosed;
+     |                                              `- note: mutation of this property is only permitted within the actor
+ 394 | - (void)miniaturize:(nullable id)sender;
+ 395 | - (void)deminiaturize:(nullable id)sender;
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:29:19: warning: call to main actor-isolated instance method 'makeKeyAndOrderFront' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+   :
+27 |         self.window = newWindow
+28 |         
+29 |         newWindow.makeKeyAndOrderFront(nil)
+   |                   `- warning: call to main actor-isolated instance method 'makeKeyAndOrderFront' in a synchronous nonisolated context [#ActorIsolatedCall]
+30 |         NSApp.activate(ignoringOtherApps: true)
+31 |     }
+
+AppKit.NSWindow.makeKeyAndOrderFront:2:22: note: calls to instance method 'makeKeyAndOrderFront' from outside of its actor context are implicitly asynchronous
+1 | class NSWindow {
+2 | @MainActor open func makeKeyAndOrderFront(_ sender: Any?)}
+  |                      |- note: calls to instance method 'makeKeyAndOrderFront' from outside of its actor context are implicitly asynchronous
+  |                      `- note: main actor isolation inferred from inheritance from class 'NSResponder'
+3 | 
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:30:15: warning: call to main actor-isolated instance method 'activate(ignoringOtherApps:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+   :
+28 |         
+29 |         newWindow.makeKeyAndOrderFront(nil)
+30 |         NSApp.activate(ignoringOtherApps: true)
+   |               `- warning: call to main actor-isolated instance method 'activate(ignoringOtherApps:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+31 |     }
+32 | }
+
+AppKit.NSApplication.activate:3:24: note: calls to instance method 'activate(ignoringOtherApps:)' from outside of its actor context are implicitly asynchronous
+1 | class NSApplication {
+2 | @available(macOS, introduced: 10.0, deprecated: 100000, message: "This method will be deprecated in a future release. Use NSApp.activate instead.")
+3 |   @MainActor open func activate(ignoringOtherApps ignoreOtherApps: Bool)}
+  |                        |- note: calls to instance method 'activate(ignoringOtherApps:)' from outside of its actor context are implicitly asynchronous
+  |                        `- note: main actor isolation inferred from inheritance from class 'NSResponder'
+4 | 
+
+/Users/kael/Projects/taichi_launcher/Sources/TaiChi/Island/MutagenWindowManager.swift:30:9: warning: main actor-isolated var 'NSApp' can not be referenced from a nonisolated context
+ 6 |     private var window: NSWindow?
+ 7 |     
+ 8 |     func show() {
+   |          `- note: add '@MainActor' to make instance method 'show()' part of global actor 'MainActor'
+ 9 |         if let window = window {
+10 |             window.makeKeyAndOrderFront(nil)
+   :
+28 |         
+29 |         newWindow.makeKeyAndOrderFront(nil)
+30 |         NSApp.activate(ignoringOtherApps: true)
+   |         `- warning: main actor-isolated var 'NSApp' can not be referenced from a nonisolated context
+31 |     }
+32 | }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSApplication.h:191:58: note: var declared here
+189 | @interface NSApplication : NSResponder <NSUserInterfaceValidations, NSMenuItemValidation, NSAccessibilityElement, NSAccessibility>
+190 | 
+191 | APPKIT_EXTERN __kindof NSApplication * _Null_unspecified NSApp NS_SWIFT_UI_ACTOR;
+    |                                                          `- note: var declared here
+192 | 
+193 | @property (class, readonly, strong) __kindof NSApplication *sharedApplication;
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#MutableGlobalVariable]: <https://docs.swift.org/compiler/documentation/diagnostics/mutable-global-variable>
+Build failed!

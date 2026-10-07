@@ -74,8 +74,10 @@ struct IslandView: View {
                 case .expanded:
                     if stateModel.currentMode == .media {
                         ExpandedPanelView()
-                    } else {
+                    } else if stateModel.currentMode == .disk {
                         MountPanelView()
+                    } else if stateModel.currentMode == .mutagen {
+                        MutagenPanelView()
                     }
                 }
             }
@@ -216,9 +218,15 @@ struct IslandView: View {
                 stateModel.capsuleHeight = hasPhysicalNotch ? baseNotchHeight + (26 * notchScale) : baseNotchHeight
             case .expanded:
                 stateModel.capsuleWidth = 380
-                stateModel.capsuleHeight = stateModel.currentMode == .disk ? 200 : 160
+                if stateModel.currentMode == .disk {
+                    stateModel.capsuleHeight = 200
+                } else if stateModel.currentMode == .mutagen {
+                    stateModel.capsuleHeight = 250
+                } else {
+                    stateModel.capsuleHeight = 160
+                }
             case .modeSwitcher:
-                stateModel.capsuleWidth = 260
+                stateModel.capsuleWidth = TaiChiSettings.shared.enableMutagen ? 350 : 260
                 stateModel.capsuleHeight = hasPhysicalNotch ? 120 : 100
             case .notification:
                 stateModel.capsuleWidth = 300

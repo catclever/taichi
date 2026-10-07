@@ -8,7 +8,8 @@ struct IslandView: View {
     @ObservedObject var lyricManager = LyricManager.shared
     
     @State private var trackChangeTimer: Timer?
-    @State private var hoverTimer: Timer?
+    @State private var cooldownTimer: Timer?
+    @State private var panelExpandTimer: Timer?
     @State private var currentArtwork: NSImage?
     @State private var waveformColor: Color = .orange
     
@@ -73,8 +74,10 @@ struct IslandView: View {
                 case .expanded:
                     if stateModel.currentMode == .media {
                         ExpandedPanelView()
-                    } else {
+                    } else if stateModel.currentMode == .disk {
                         MountPanelView()
+                    } else if stateModel.currentMode == .mutagen {
+                        MutagenPanelView()
                     }
                 }
             }
@@ -92,12 +95,12 @@ struct IslandView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleHeight)
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.state)
         .onChange(of: stateModel.isNotchHovered) { isNotchHovered in
-            hoverTimer?.invalidate()
+            cooldownTimer?.invalidate()
             if isNotchHovered && stateModel.state == .trackChanged && !mediaObserver.state.title.isEmpty {
                 // Instantly expand if they actively move into the notch from stage 1?
                 // Wait, if they just transitioned to stage 1, they didn't actively move into the notch.
-                // Let's just use a 0.5s timer so there's a slight delay, making it feel like a smooth 2-stage interaction.
-                hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+                // Let's just use a 1.5s timer so there's a slight delay, making it feel like a smooth 2-stage interaction.
+                cooldownTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
                     Task { @MainActor in
                         if self.stateModel.isNotchHovered && self.stateModel.state == .trackChanged {
                             self.stateModel.currentMode = .media
@@ -110,9 +113,13 @@ struct IslandView: View {
             }
         }
         .onChange(of: stateModel.state) { newState in
+            if newState == .multiAppList || newState == .modeSwitcher {
+                panelExpandTimer?.invalidate()
+                cooldownTimer?.invalidate()
+            }
             if newState == .trackChanged && stateModel.isNotchHovered && !mediaObserver.state.title.isEmpty {
-                hoverTimer?.invalidate()
-                hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+                cooldownTimer?.invalidate()
+                cooldownTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
                     Task { @MainActor in
                         if self.stateModel.isNotchHovered && self.stateModel.state == .trackChanged {
                             self.stateModel.currentMode = .media
@@ -126,6 +133,31 @@ struct IslandView: View {
         }
         .onChange(of: stateModel.isHovering) { isHovering in
             handleHover(isHovering)
+            updateStateDimensions()
+        }
+        .onChange(of: stateModel.isCenterNotchHovered) { isCenterHovered in
+            if isCenterHovered {
+                if stateModel.state == .multiAppList || stateModel.state == .modeSwitcher { return }
+                
+                panelExpandTimer?.invalidate()
+                panelExpandTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
+                    Task { @MainActor in
+                        if self.stateModel.isCenterNotchHovered && self.stateModel.state != .multiAppList && self.stateModel.state != .modeSwitcher {
+                            self.stateModel.currentMode = .media
+                            withAnimation {
+                                self.stateModel.state = .expanded
+                            }
+                        }
+                    }
+                }
+            } else {
+                panelExpandTimer?.invalidate()
+            }
+        }
+        .onChange(of: stateModel.isHoveringIcons) { isHoveringIcons in
+            if isHoveringIcons {
+                panelExpandTimer?.invalidate()
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top) // Fill the hosting view to position notch
         .onChange(of: mediaObserver.state.title) { _ in
@@ -138,7 +170,7 @@ struct IslandView: View {
             updateStateDimensions()
         }
         .onReceive(timer) { _ in
-            guard stateModel.isLyricPinned else { return }
+            guard stateModel.isLyricPinned && mediaObserver.state.isPlaying else { return }
             let actualTime = mediaObserver.state.currentElapsedTime
             if actualTime > mediaObserver.state.duration && mediaObserver.state.duration > 0 {
                 localElapsedTime = mediaObserver.state.duration
@@ -173,7 +205,8 @@ struct IslandView: View {
                     stateModel.capsuleWidth = hasPhysicalNotch ? (baseNotchWidth + 80) : (baseNotchWidth + (200 * notchScale))
                     stateModel.capsuleHeight = hasPhysicalNotch ? baseNotchHeight + (26 * notchScale) : baseNotchHeight
                 } else {
-                    stateModel.capsuleWidth = baseNotchWidth + 80
+                    let isPausedAndNotHovering = !mediaObserver.state.isPlaying && !stateModel.isHovering
+                    stateModel.capsuleWidth = isPausedAndNotHovering ? baseNotchWidth : baseNotchWidth + 80
                     stateModel.capsuleHeight = baseNotchHeight
                 }
             case .trackChanged:
@@ -185,7 +218,13 @@ struct IslandView: View {
                 stateModel.capsuleHeight = hasPhysicalNotch ? baseNotchHeight + (26 * notchScale) : baseNotchHeight
             case .expanded:
                 stateModel.capsuleWidth = 380
-                stateModel.capsuleHeight = stateModel.currentMode == .disk ? 200 : 160
+                if stateModel.currentMode == .disk {
+                    stateModel.capsuleHeight = 200
+                } else if stateModel.currentMode == .mutagen {
+                    stateModel.capsuleHeight = 250
+                } else {
+                    stateModel.capsuleHeight = 160
+                }
             case .modeSwitcher:
                 stateModel.capsuleWidth = 260
                 stateModel.capsuleHeight = hasPhysicalNotch ? 120 : 100
@@ -429,12 +468,12 @@ struct IslandView: View {
     // MARK: - Logic
     
     private func handleHover(_ isHovering: Bool) {
-        hoverTimer?.invalidate()
+        cooldownTimer?.invalidate()
         if isHovering {
             let hasMusicState = !mediaObserver.state.title.isEmpty
             
             if !hasMusicState {
-                hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+                cooldownTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
                     Task { @MainActor in
                         if self.stateModel.state == .idle {
                             withAnimation {
@@ -446,7 +485,7 @@ struct IslandView: View {
                 return
             }
             
-            hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+            cooldownTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
                 Task { @MainActor in
                     if self.stateModel.state == .notification {
                         withAnimation { self.stateModel.state = .expanded }
@@ -454,25 +493,18 @@ struct IslandView: View {
                     }
                     
                     if self.stateModel.state == .idle {
-                        withAnimation { self.stateModel.state = .trackChanged }
+                        if self.mediaObserver.state.isPlaying {
+                            withAnimation { self.stateModel.state = .trackChanged }
+                        }
+                        // If not playing, stay in .idle. updateStateDimensions will show the icons since isHovering is true.
                     }
-                    
-
                 }
             }
         } else {
-            // Mouse left the interactive area
-            if stateModel.state == .expanded {
-                if !stateModel.isPinned {
-                    hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in
-                        Task { @MainActor in
-                            withAnimation {
-                                self.stateModel.state = .idle
-                            }
-                        }
-                    }
-                }
-            } else if stateModel.state == .trackChanged {
+            panelExpandTimer?.invalidate()
+            if stateModel.state == .expanded && stateModel.isPinned {
+                // Keep pinned
+            } else {
                 withAnimation {
                     stateModel.state = .idle
                 }
@@ -536,8 +568,7 @@ struct SpinningRecord: View {
     var duration: Double = 3.0
     var isPlaying: Bool = true
     
-    @State private var rotation: Double = 0
-    @State private var timer: Timer? = nil
+    @State private var isAnimating = false
     
     var body: some View {
         Image(nsImage: image)
@@ -545,37 +576,19 @@ struct SpinningRecord: View {
             .aspectRatio(contentMode: .fill)
             .clipShape(Circle())
             .overlay(Circle().stroke(Color.black.opacity(0.2), lineWidth: 1)) // record groove
-            .rotationEffect(.degrees(rotation))
-            .onChange(of: isPlaying) { playing in
-                updateTimer(playing)
-            }
+            .rotationEffect(.degrees(isAnimating && isPlaying ? 360 : 0))
+            .animation(
+                (isAnimating && isPlaying)
+                    ? .linear(duration: duration).repeatForever(autoreverses: false)
+                    : .default,
+                value: isAnimating && isPlaying
+            )
             .onAppear {
-                updateTimer(isPlaying)
+                isAnimating = true
             }
             .onDisappear {
-                timer?.invalidate()
-                timer = nil
+                isAnimating = false
             }
-    }
-    
-    private func updateTimer(_ playing: Bool) {
-        if playing {
-            if timer == nil {
-                let fps = 60.0
-                let interval = 1.0 / fps
-                let degreesPerTick = 360.0 / duration / fps
-                timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
-                    Task { @MainActor in
-                        rotation += degreesPerTick
-                        if rotation >= 360 { rotation -= 360 }
-                    }
-                }
-                RunLoop.main.add(timer!, forMode: .common)
-            }
-        } else {
-            timer?.invalidate()
-            timer = nil
-        }
     }
 }
 

@@ -1,0 +1,123 @@
+import SwiftUI
+
+struct MutagenConfigView: View {
+    @StateObject private var manager = MutagenManager.shared
+    @State private var selectedSessionId: String?
+    @State private var editedIgnores: [String: [String]] = [:]
+    @State private var newIgnoreText: String = ""
+    
+    var body: some View {
+        NavigationView {
+            List(manager.sessions, selection: $selectedSessionId) { session in
+                Text(session.name ?? session.identifier)
+                    .tag(session.id)
+            }
+            .listStyle(SidebarListStyle())
+            .frame(minWidth: 200)
+            
+            if let selectedSessionId = selectedSessionId,
+               let session = manager.sessions.first(where: { $0.id == selectedSessionId }) {
+                VStack(alignment: .leading) {
+                    Text("任务: \(session.name ?? session.identifier)")
+                        .font(.title2)
+                        .padding(.bottom, 10)
+                    
+                    Text("Ignore 列表:")
+                        .font(.headline)
+                    
+                    let currentIgnores = editedIgnores[session.id] ?? session.ignore?.paths ?? []
+                    
+                    List {
+                        ForEach(currentIgnores, id: \.self) { ignorePath in
+                            HStack {
+                                Text(ignorePath)
+                                Spacer()
+                                Button(action: {
+                                    removeIgnore(from: session.id, path: ignorePath)
+                                }) {
+                                    Image(systemName: "trash")
+                                        .foregroundColor(.red)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                    }
+                    .frame(maxHeight: .infinity)
+                    
+                    HStack {
+                        TextField("新增 ignore 规则", text: $newIgnoreText)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                        Button("添加") {
+                            addIgnore(to: session.id, path: newIgnoreText)
+                        }
+                        .disabled(newIgnoreText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    .padding(.top, 10)
+                    
+                    Spacer()
+                    
+                    HStack {
+                        Spacer()
+                        Button("保存并热重启") {
+                            hotRestart(session: session)
+                        }
+                        .buttonStyle(BorderedProminentButtonStyle())
+                        .controlSize(.large)
+                    }
+                    .padding(.top, 20)
+                }
+                .padding()
+            } else {
+                Text("请选择一个任务")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .onAppear {
+            manager.fetchSessions()
+        }
+    }
+    
+    private func addIgnore(to sessionId: String, path: String) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        
+        let session = manager.sessions.first(where: { $0.id == sessionId })
+        var current = editedIgnores[sessionId] ?? session?.ignore?.paths ?? []
+        if !current.contains(trimmed) {
+            current.append(trimmed)
+            editedIgnores[sessionId] = current
+        }
+        newIgnoreText = ""
+    }
+    
+    private func removeIgnore(from sessionId: String, path: String) {
+        let session = manager.sessions.first(where: { $0.id == sessionId })
+        var current = editedIgnores[sessionId] ?? session?.ignore?.paths ?? []
+        current.removeAll { $0 == path }
+        editedIgnores[sessionId] = current
+    }
+    
+    private func hotRestart(session: MutagenSession) {
+        let currentIgnores = editedIgnores[session.id] ?? session.ignore?.paths ?? []
+        let createCmd = session.generateCreateCommand(newIgnores: currentIgnores)
+        
+        Task.detached {
+            let termTask = Process()
+            termTask.launchPath = "/bin/sh"
+            termTask.arguments = ["-c", "export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH; mutagen sync terminate \(session.id)"]
+            try? termTask.run()
+            termTask.waitUntilExit()
+            
+            let createTask = Process()
+            createTask.launchPath = "/bin/sh"
+            createTask.arguments = ["-c", "export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH; \(createCmd)"]
+            try? createTask.run()
+            createTask.waitUntilExit()
+            
+            await MainActor.run {
+                MutagenManager.shared.fetchSessions()
+            }
+        }
+    }
+}

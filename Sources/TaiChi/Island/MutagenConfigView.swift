@@ -1,0 +1,523 @@
+import SwiftUI
+import UniformTypeIdentifiers
+import AppKit
+
+public struct MutagenConfigView: View {
+    @StateObject private var manager = MutagenManager.shared
+    @State private var selectedSessionId: String?
+    @State private var editedIgnores: [String: [String]] = [:]
+    @State private var newIgnoreText: String = ""
+    @State private var isDropTargeted: Bool = false
+    @State private var errorMessage: String?
+    @State private var isSaving: Bool = false
+    
+    public init() {}
+    
+    public var body: some View {
+        NavigationView {
+            sidebarList
+                .listStyle(SidebarListStyle())
+                .frame(minWidth: 220)
+            
+            detailContent
+        }
+        .onAppear {
+            manager.loadMappings()
+            manager.fetchSessions()
+            if selectedSessionId == nil, let first = manager.sessions.first {
+                selectedSessionId = first.id
+            }
+        }
+        .onChange(of: selectedSessionId) { _ in
+            errorMessage = nil
+            newIgnoreText = ""
+        }
+        .onChange(of: manager.sessions) { newSessions in
+            if selectedSessionId == nil, let first = newSessions.first {
+                selectedSessionId = first.id
+            }
+        }
+    }
+    
+    // MARK: - Sidebar List
+    
+    private var sidebarList: some View {
+        List(manager.sessions, selection: $selectedSessionId) { session in
+            let sessionType = manager.sessionType(for: session)
+            
+            HStack(spacing: 8) {
+                sidebarIcon(for: sessionType)
+                    .frame(width: 18, height: 18)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.name ?? session.identifier)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                    
+                    HStack(spacing: 4) {
+                        if case .unlinkedProject = sessionType {
+                            Text("未绑定")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        }
+                        
+                        if let status = session.status {
+                            Text(status)
+                                .font(.caption2)
+                                .foregroundColor((status.lowercased().contains("watching")) ? .green : .secondary)
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .padding(.vertical, 3)
+            .tag(session.id)
+        }
+    }
+    
+    @ViewBuilder
+    private func sidebarIcon(for type: SessionType) -> some View {
+        switch type {
+        case .normal:
+            Image(systemName: "terminal")
+                .foregroundColor(.secondary)
+        case .linkedProject:
+            Image(systemName: "doc.text")
+                .foregroundColor(.blue)
+        case .unlinkedProject:
+            ZStack(alignment: .bottomTrailing) {
+                Image(systemName: "doc.text")
+                    .foregroundColor(.secondary)
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 8))
+                    .foregroundColor(.yellow)
+                    .offset(x: 3, y: 3)
+            }
+        }
+    }
+    
+    // MARK: - Detail Content
+    
+    @ViewBuilder
+    private var detailContent: some View {
+        if let selectedSessionId = selectedSessionId,
+           let session = manager.sessions.first(where: { $0.id == selectedSessionId }) {
+            let sessionType = manager.sessionType(for: session)
+            
+            VStack(alignment: .leading, spacing: 14) {
+                detailHeader(session: session, type: sessionType)
+                
+                switch sessionType {
+                case .unlinkedProject(let projectId):
+                    unlinkedProjectView(session: session, projectId: projectId)
+                case .linkedProject(let projectId, let configPath):
+                    linkedProjectView(session: session, projectId: projectId, configPath: configPath)
+                case .normal:
+                    normalTaskView(session: session)
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            VStack(spacing: 8) {
+                Image(systemName: "tray")
+                    .font(.system(size: 32))
+                    .foregroundColor(.secondary)
+                Text("请选择一个 Mutagen 任务")
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+    
+    // MARK: - Header
+    
+    private func detailHeader(session: MutagenSession, type: SessionType) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text("任务: \(session.name ?? session.identifier)")
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            switch type {
+            case .normal:
+                Label("CLI 任务", systemImage: "terminal")
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.12))
+                    .foregroundColor(.secondary)
+                    .cornerRadius(4)
+            case .unlinkedProject:
+                Label("未绑定项目", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.orange.opacity(0.15))
+                    .foregroundColor(.orange)
+                    .cornerRadius(4)
+            case .linkedProject:
+                Label("Project", systemImage: "doc.text")
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.blue.opacity(0.15))
+                    .foregroundColor(.blue)
+                    .cornerRadius(4)
+            }
+            
+            Spacer()
+            
+            if let status = session.status {
+                Text(status)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        (status.lowercased().contains("watching"))
+                            ? Color.green.opacity(0.15)
+                            : Color.orange.opacity(0.15)
+                    )
+                    .foregroundColor(
+                        (status.lowercased().contains("watching")) ? .green : .orange
+                    )
+                    .cornerRadius(4)
+            }
+        }
+    }
+    
+    // MARK: - Unlinked Project View (Drop Zone)
+    
+    private func unlinkedProjectView(session: MutagenSession, projectId: String) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("此任务由 Mutagen Project 管理（Project ID: \(projectId)），但当前未绑定对应的 mutagen.yml 配置文件。")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(
+                        isDropTargeted ? Color.accentColor : Color.secondary.opacity(0.35),
+                        style: StrokeStyle(lineWidth: 2, dash: [8, 4])
+                    )
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(isDropTargeted ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.03))
+                    )
+                
+                VStack(spacing: 14) {
+                    Image(systemName: "doc.badge.plus")
+                        .font(.system(size: 48))
+                        .foregroundColor(isDropTargeted ? .accentColor : .secondary)
+                    
+                    VStack(spacing: 4) {
+                        Text("将 mutagen.yml 拖拽至此，或点击浏览文件")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        
+                        Text("支持 .yml 或 .yaml 格式的 Mutagen 配置文件")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Button("浏览文件...") {
+                        openFilePanel(for: projectId)
+                    }
+                    .buttonStyle(BorderedButtonStyle())
+                    .controlSize(.regular)
+                }
+                .padding(36)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                openFilePanel(for: projectId)
+            }
+            .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+                handleDrop(providers: providers, for: projectId)
+            }
+            
+            if let errorMsg = errorMessage {
+                HStack {
+                    Image(systemName: "exclamationmark.circle")
+                        .foregroundColor(.red)
+                    Text(errorMsg)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+            }
+        }
+    }
+    
+    // MARK: - Linked Project View
+    
+    private func linkedProjectView(session: MutagenSession, projectId: String, configPath: String) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // 配置文件卡片
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: "doc.text.fill")
+                        .foregroundColor(.blue)
+                    Text("配置文件路径")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                
+                HStack(spacing: 8) {
+                    Text(configPath)
+                        .font(.system(.callout, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: configPath)])
+                    }) {
+                        Label("在访达中显示", systemImage: "folder")
+                    }
+                    .buttonStyle(BorderlessButtonStyle())
+                    .foregroundColor(.accentColor)
+                    
+                    Button(action: {
+                        openFilePanel(for: projectId)
+                    }) {
+                        Label("重新绑定", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(BorderlessButtonStyle())
+                    .foregroundColor(.secondary)
+                }
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+            
+            // Ignore 规则编辑
+            ignoreListSection(sessionId: session.id, fallbackIgnores: session.ignore?.paths ?? [])
+            
+            Spacer()
+            
+            // 底部操作区
+            HStack {
+                if let errorMsg = errorMessage {
+                    Text(errorMsg)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                        .lineLimit(2)
+                }
+                
+                Spacer()
+                
+                if isSaving {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(.trailing, 4)
+                }
+                
+                Button("保存至配置文件并重启项目") {
+                    saveToConfigAndRestart(session: session, configPath: configPath)
+                }
+                .buttonStyle(BorderedProminentButtonStyle())
+                .controlSize(.large)
+                .disabled(isSaving)
+            }
+            .padding(.top, 10)
+        }
+    }
+    
+    // MARK: - Normal Task View
+    
+    private func normalTaskView(session: MutagenSession) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ignoreListSection(sessionId: session.id, fallbackIgnores: session.ignore?.paths ?? [])
+            
+            Spacer()
+            
+            HStack {
+                if let errorMsg = errorMessage {
+                    Text(errorMsg)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                        .lineLimit(2)
+                }
+                
+                Spacer()
+                
+                if isSaving {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(.trailing, 4)
+                }
+                
+                Button("保存并热重启") {
+                    hotRestart(session: session)
+                }
+                .buttonStyle(BorderedProminentButtonStyle())
+                .controlSize(.large)
+                .disabled(isSaving)
+            }
+            .padding(.top, 10)
+        }
+    }
+    
+    // MARK: - Ignore List Section
+    
+    private func ignoreListSection(sessionId: String, fallbackIgnores: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Ignore 列表:")
+                .font(.headline)
+            
+            let currentIgnores = editedIgnores[sessionId] ?? fallbackIgnores
+            
+            List {
+                ForEach(currentIgnores, id: \.self) { ignorePath in
+                    HStack {
+                        Text(ignorePath)
+                        Spacer()
+                        Button(action: {
+                            removeIgnore(from: sessionId, path: ignorePath, fallback: fallbackIgnores)
+                        }) {
+                            Image(systemName: "trash")
+                                .foregroundColor(.red)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+            }
+            .frame(minHeight: 120, maxHeight: .infinity)
+            
+            HStack {
+                TextField("新增 ignore 规则", text: $newIgnoreText)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                Button("添加") {
+                    addIgnore(to: sessionId, path: newIgnoreText, fallback: fallbackIgnores)
+                }
+                .disabled(newIgnoreText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.top, 4)
+        }
+    }
+    
+    // MARK: - Ignore Mutations
+    
+    private func addIgnore(to sessionId: String, path: String, fallback: [String]) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        
+        var current = editedIgnores[sessionId] ?? fallback
+        if !current.contains(trimmed) {
+            current.append(trimmed)
+            editedIgnores[sessionId] = current
+        }
+        newIgnoreText = ""
+    }
+    
+    private func removeIgnore(from sessionId: String, path: String, fallback: [String]) {
+        var current = editedIgnores[sessionId] ?? fallback
+        current.removeAll { $0 == path }
+        editedIgnores[sessionId] = current
+    }
+    
+    // MARK: - Actions
+    
+    private func handleDrop(providers: [NSItemProvider], for projectId: String) -> Bool {
+        guard let provider = providers.first else { return false }
+        
+        if provider.canLoadObject(ofClass: URL.self) {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url = url {
+                    Task { @MainActor in
+                        bindFileURL(url, for: projectId)
+                    }
+                }
+            }
+            return true
+        }
+        
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+            var targetURL: URL?
+            if let url = item as? URL {
+                targetURL = url
+            } else if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                targetURL = url
+            } else if let str = item as? String {
+                targetURL = URL(fileURLWithPath: str)
+            }
+            if let targetURL = targetURL {
+                Task { @MainActor in
+                    bindFileURL(targetURL, for: projectId)
+                }
+            }
+        }
+        return true
+    }
+    
+    private func bindFileURL(_ url: URL, for projectId: String) {
+        let path = url.standardizedFileURL.path
+        let ext = url.pathExtension.lowercased()
+        guard ext == "yml" || ext == "yaml" else {
+            errorMessage = "请选择 .yml 或 .yaml 格式的 Mutagen 配置文件"
+            return
+        }
+        guard FileManager.default.fileExists(atPath: path) else {
+            errorMessage = "配置文件不存在: \(path)"
+            return
+        }
+        errorMessage = nil
+        manager.bind(projectId: projectId, path: path)
+    }
+    
+    private func openFilePanel(for projectId: String) {
+        let panel = NSOpenPanel()
+        panel.title = "选择 mutagen.yml 配置文件"
+        panel.showsResizeIndicator = true
+        panel.showsHiddenFiles = true
+        panel.canChooseDirectories = false
+        panel.canCreateDirectories = false
+        panel.allowsMultipleSelection = false
+        if let ymlType = UTType(filenameExtension: "yml"),
+           let yamlType = UTType(filenameExtension: "yaml") {
+            panel.allowedContentTypes = [ymlType, yamlType]
+        } else {
+            panel.allowedContentTypes = [.item]
+        }
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            bindFileURL(url, for: projectId)
+        }
+    }
+    
+    private func saveToConfigAndRestart(session: MutagenSession, configPath: String) {
+        let currentIgnores = editedIgnores[session.id] ?? session.ignore?.paths ?? []
+        isSaving = true
+        errorMessage = nil
+        
+        Task {
+            do {
+                try await manager.updateProjectIgnoreAndReload(
+                    session: session,
+                    configPath: configPath,
+                    newIgnores: currentIgnores
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isSaving = false
+        }
+    }
+    
+    private func hotRestart(session: MutagenSession) {
+        let currentIgnores = editedIgnores[session.id] ?? session.ignore?.paths ?? []
+        isSaving = true
+        errorMessage = nil
+        
+        Task {
+            do {
+                try await manager.hotRestartNormal(session: session, newIgnores: currentIgnores)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isSaving = false
+        }
+    }
+}

@@ -1,0 +1,144 @@
+import Foundation
+import Combine
+
+struct MutagenIgnore: Codable, Equatable {
+    let paths: [String]?
+}
+
+struct MutagenEndpoint: Codable, Equatable {
+    let url: String?
+    let connected: Bool?
+    let `protocol`: String?
+    let path: String?
+    let host: String?
+    let user: String?
+    let port: Int?
+    
+    var commandFormat: String {
+        if let proto = `protocol`, proto != "local" {
+            var prefix = ""
+            if let user = user, !user.isEmpty {
+                prefix += "\(user)@"
+            }
+            if let host = host, !host.isEmpty {
+                prefix += host
+            }
+            if let port = port {
+                prefix += ":\(port)"
+            }
+            let p = path ?? ""
+            if !prefix.isEmpty {
+                return "\(prefix):\(p)"
+            }
+        }
+        return path ?? url ?? ""
+    }
+}
+
+struct MutagenSession: Codable, Identifiable, Equatable {
+    let identifier: String
+    let name: String?
+    let alpha: MutagenEndpoint?
+    let beta: MutagenEndpoint?
+    let status: String?
+    let paused: Bool?
+    let mode: String?
+    let ignore: MutagenIgnore?
+    
+    var id: String { identifier }
+    
+    func generateCreateCommand(newIgnores: [String]) -> String {
+        var cmd = "mutagen sync create"
+        
+        if let name = name, !name.isEmpty {
+            cmd += " --name=\"\(name)\""
+        }
+        
+        let syncMode = mode ?? "two-way-safe"
+        cmd += " -m \(syncMode)"
+        
+        for ig in newIgnores {
+            cmd += " -i \"\(ig)\""
+        }
+        
+        let alphaStr = alpha?.commandFormat ?? ""
+        let betaStr = beta?.commandFormat ?? ""
+        
+        cmd += " \"\(alphaStr)\" \"\(betaStr)\""
+        
+        return cmd
+    }
+}
+
+@MainActor
+class MutagenManager: ObservableObject {
+    static let shared = MutagenManager()
+    
+    @Published var sessions: [MutagenSession] = []
+    
+    private init() {}
+    
+    func checkInstallStatus() -> Bool {
+        let task = Process()
+        task.launchPath = "/bin/sh"
+        task.arguments = ["-c", "export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH; which mutagen"]
+        
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            return task.terminationStatus == 0 && !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } catch {
+            return false
+        }
+    }
+    
+    func fetchSessions() {
+        Task.detached {
+            let task = Process()
+            task.launchPath = "/bin/sh"
+            task.arguments = ["-c", "export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH; mutagen sync list --template '{{json .}}'"]
+            
+            let pipe = Pipe()
+            task.standardOutput = pipe
+            
+            do {
+                try task.run()
+                task.waitUntilExit()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                
+                if let decoded = try? JSONDecoder().decode([MutagenSession].self, from: data) {
+                    await MainActor.run { self.sessions = decoded }
+                } else if let single = try? JSONDecoder().decode(MutagenSession.self, from: data) {
+                    await MainActor.run { self.sessions = [single] }
+                } else {
+                    let str = String(data: data, encoding: .utf8) ?? ""
+                    let lines = str.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                    var parsedSessions = [MutagenSession]()
+                    for line in lines {
+                        if let d = line.data(using: .utf8), let s = try? JSONDecoder().decode(MutagenSession.self, from: d) {
+                            parsedSessions.append(s)
+                        }
+                    }
+                    if !parsedSessions.isEmpty {
+                        await MainActor.run { self.sessions = parsedSessions }
+                    } else if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              let list = dict["sessions"] as? [[String: Any]],
+                              let listData = try? JSONSerialization.data(withJSONObject: list),
+                              let arr = try? JSONDecoder().decode([MutagenSession].self, from: listData) {
+                        await MainActor.run { self.sessions = arr }
+                    } else {
+                        await MainActor.run { self.sessions = [] }
+                    }
+                }
+            } catch {
+                print("Mutagen fetch error: \(error)")
+            }
+        }
+    }
+}

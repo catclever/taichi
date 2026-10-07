@@ -1,0 +1,81 @@
+import SwiftUI
+
+struct MutagenPanelView: View {
+    @StateObject private var mutagenManager = MutagenManager.shared
+    @State private var timer: Timer?
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Mutagen Sessions")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Button(action: {
+                    SettingsWindowManager.shared.show()
+                }) {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.gray)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(.horizontal)
+            .padding(.top, 16)
+            
+            ScrollView {
+                if mutagenManager.sessions.isEmpty {
+                    Text("No active sessions")
+                        .foregroundColor(.gray)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding()
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(mutagenManager.sessions) { session in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(session.name ?? session.identifier)
+                                        .font(.subheadline)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+                                    
+                                    HStack {
+                                        Text(session.status ?? "Unknown")
+                                            .font(.caption)
+                                            .foregroundColor((session.status?.lowercased().contains("watching") ?? false) ? .green : .orange)
+                                        
+                                        if session.paused == true {
+                                            Text("(Paused)")
+                                                .font(.caption)
+                                                .foregroundColor(.red)
+                                        }
+                                    }
+                                }
+                                Spacer()
+                            }
+                            .padding(10)
+                            .background(Color.white.opacity(0.1))
+                            .cornerRadius(8)
+                            .padding(.horizontal)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            mutagenManager.fetchSessions()
+            // Lazy Loading logic
+            timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+                mutagenManager.fetchSessions()
+            }
+        }
+        .onDisappear {
+            timer?.invalidate()
+            timer = nil
+        }
+    }
+}

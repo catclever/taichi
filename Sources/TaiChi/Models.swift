@@ -111,6 +111,7 @@ class TaiChiSettings: ObservableObject {
     static let shared = TaiChiSettings()
     
     private var isInitializing = true
+    @Published var enableMutagen: Bool = false { didSet { saveEnableMutagen() } }
     
     
     @Published var showMenuBarLyrics: Bool = UserDefaults.standard.bool(forKey: "showMenuBarLyrics") {
@@ -347,6 +348,7 @@ class TaiChiSettings: ObservableObject {
             hsConfigPath = hsPath
         }
         
+        enableMutagen = UserDefaults.standard.bool(forKey: "enableMutagen")
         isFloatingFeatureEnabled = UserDefaults.standard.bool(forKey: "isFloatingFeatureEnabled")
         isTelescopeEnabled = UserDefaults.standard.bool(forKey: "isTelescopeEnabled")
         isAudioKeepAliveEnabled = UserDefaults.standard.bool(forKey: "isAudioKeepAliveEnabled")
@@ -480,6 +482,11 @@ class TaiChiSettings: ObservableObject {
         UserDefaults.standard.set(hsConfigPath, forKey: "hsConfigPath")
     }
     
+    private func saveEnableMutagen() {
+        guard !isInitializing else { return }
+        UserDefaults.standard.set(enableMutagen, forKey: "enableMutagen")
+    }
+
     private func saveHSFeatures() {
         guard !isInitializing else { return }
         UserDefaults.standard.set(isFloatingFeatureEnabled, forKey: "isFloatingFeatureEnabled")

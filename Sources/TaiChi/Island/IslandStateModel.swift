@@ -6,6 +6,7 @@ import SwiftUI
 enum IslandMode: String, Equatable {
     case media
     case disk
+    case mutagen
 }
 
 enum IslandState: Equatable {

@@ -1,0 +1,32 @@
+import SwiftUI
+import AppKit
+
+class MutagenWindowManager {
+    static let shared = MutagenWindowManager()
+    private var window: NSWindow?
+    
+    func show() {
+        if let window = window {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        
+        let configView = MutagenConfigView()
+        let newWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        newWindow.title = "Mutagen 配置"
+        newWindow.center()
+        newWindow.contentView = NSHostingView(rootView: configView)
+        newWindow.isReleasedWhenClosed = false
+        
+        self.window = newWindow
+        
+        newWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}

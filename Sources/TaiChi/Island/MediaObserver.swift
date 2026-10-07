@@ -23,6 +23,7 @@ struct MediaState: Equatable {
     var lastElapsedTimeUpdate: Date = Date()
     var mediaType: String? = nil
     var debugInfo: String = ""
+    var isLiked: Bool? = nil
     
     var currentElapsedTime: Double {
         guard duration > 0 else { return 0 }
@@ -361,6 +362,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         case 2: commandKey = "playpause"
         case 4: commandKey = "next"
         case 5: commandKey = "prev"
+        case 6: commandKey = "toggleLike"
         default: commandKey = ""
         }
         

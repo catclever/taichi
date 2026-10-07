@@ -430,6 +430,10 @@ class ServerManager: @unchecked Sendable {
             return self?.handleLyricsPush(request) ?? .internalServerError
         }
         
+        server["/api/media/like_status"] = { [weak self] request in
+            return self?.handleMediaLikeStatus(request) ?? .internalServerError
+        }
+        
         // 5. List Config Injection API
         server["/api/config/list/:listName"] = { [weak self] request in
             return self?.handleListConfigRequest(request) ?? .internalServerError
@@ -592,6 +596,22 @@ class ServerManager: @unchecked Sendable {
         }
         
         return .internalServerError
+    }
+    
+    private func handleMediaLikeStatus(_ request: HttpRequest) -> HttpResponse {
+        guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
+        let body = Data(request.body)
+        guard let json = try? JSONSerialization.jsonObject(with: body, options: []) as? [String: Any] else {
+            return jsonResponse(["error": "Invalid JSON payload"], statusCode: 400)
+        }
+        
+        let isLiked = json["isLiked"] as? Bool
+        
+        DispatchQueue.main.async {
+            MediaObserver.shared.state.isLiked = isLiked
+        }
+        
+        return jsonResponse(["success": true, "isLiked": isLiked as Any])
     }
     
     private func handleLyricsPush(_ request: HttpRequest) -> HttpResponse {

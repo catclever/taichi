@@ -69,6 +69,15 @@ struct ExpandedPanelView: View {
                                             .font(.title2)
                                             .foregroundColor(.white)
                                     }.buttonStyle(PlainButtonStyle())
+                                    
+                                    if let isLiked = mediaObserver.state.isLiked {
+                                        Button(action: { mediaObserver.sendTargetedCommand(6) }) { // Toggle Like
+                                            Image(systemName: isLiked ? "heart.fill" : "heart")
+                                                .font(.title2)
+                                                .foregroundColor(isLiked ? .red : .white)
+                                        }.buttonStyle(PlainButtonStyle())
+                                    }
+                                    
                                     Spacer()
                                 }
                                 Spacer()

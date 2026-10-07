@@ -29,6 +29,20 @@ struct ModeSwitcherView: View {
                     }
                 }
             )
+            
+            if TaiChiSettings.shared.enableMutagen {
+                ModeButton(
+                    iconName: "arrow.triangle.2.circlepath",
+                    title: "Mutagen",
+                    isSelected: stateModel.currentMode == .mutagen,
+                    action: {
+                        withAnimation {
+                            stateModel.currentMode = .mutagen
+                            stateModel.state = .expanded
+                        }
+                    }
+                )
+            }
         }
         .padding(.vertical, 20)
         .padding(.horizontal, 40)

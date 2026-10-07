@@ -213,7 +213,7 @@ class MenuBarLyricManager: NSObject {
         
         if popover == nil {
             let p = NSPopover()
-            p.contentSize = NSSize(width: 200, height: 60)
+            p.contentSize = NSSize(width: 240, height: 60)
             p.behavior = .transient
             
             let host = NSHostingController(rootView: MenuBarPlayerView())
@@ -257,8 +257,17 @@ struct MenuBarPlayerView: View {
                     .font(.title2)
             }
             .buttonStyle(.plain)
+            
+            if let isLiked = observer.state.isLiked {
+                Button(action: { observer.sendTargetedCommand(6) }) { // Toggle Like
+                    Image(systemName: isLiked ? "heart.fill" : "heart")
+                        .font(.title2)
+                        .foregroundColor(isLiked ? .red : .primary)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding()
-        .frame(width: 200, height: 60)
+        .frame(width: 240, height: 60)
     }
 }

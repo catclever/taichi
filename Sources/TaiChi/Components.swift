@@ -148,17 +148,7 @@ struct SettingsButton: View {
             
             if isDoubleClick {
                 clickTask?.cancel()
-                if shouldShowApp {
-                    // Icon = App -> Double = Settings
-                    openSettings()
-                } else {
-                    // Icon = TaiChi -> Double = App (if available)
-                    if let app = lastApp {
-                        onOpenApp?(app)
-                    } else {
-                        openSettings()
-                    }
-                }
+                openSettings()
             } else {
                 // Single click
                 if lastApp == nil {
@@ -204,6 +194,17 @@ struct SettingsButton: View {
                         .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHovered)
                 }
             }
+            .background(RightClickCatcherView {
+                if shouldShowApp {
+                    openSettings()
+                } else {
+                    if let app = lastApp {
+                        onOpenApp?(app)
+                    } else {
+                        openSettings()
+                    }
+                }
+            })
             .scaleEffect(isHovered ? 1.1 : 1.0)
             .contentShape(Circle())
             .onHover { hovering in
@@ -308,5 +309,23 @@ struct ScrollTriggerArea: View {
                 isHovered = hovering
                 onHover(hovering)
             }
+    }
+}
+
+
+struct RightClickCatcherView: NSViewRepresentable {
+    var onRightClick: () -> Void
+    func makeNSView(context: Context) -> RightClickNSView {
+        let view = RightClickNSView()
+        view.onRightClick = onRightClick
+        return view
+    }
+    func updateNSView(_ nsView: RightClickNSView, context: Context) {}
+}
+
+class RightClickNSView: NSView {
+    var onRightClick: (() -> Void)?
+    override func rightMouseUp(with event: NSEvent) {
+        onRightClick?()
     }
 }

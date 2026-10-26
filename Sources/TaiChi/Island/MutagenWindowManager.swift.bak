@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 
+@MainActor
 class MutagenWindowManager {
     static let shared = MutagenWindowManager()
     private var window: NSWindow?

@@ -7,6 +7,11 @@ class ProxyResponse: @unchecked Sendable {
     var statusCode: Int = 500
 }
 
+private class SyncBox<T>: @unchecked Sendable {
+    var value: T
+    init(_ value: T) { self.value = value }
+}
+
 class ServerManager: @unchecked Sendable {
     static let shared = ServerManager()
     
@@ -22,7 +27,7 @@ class ServerManager: @unchecked Sendable {
     private let maxCacheItems = 1000
     
     private var workerProcess: Foundation.Process?
-    private var workerPort: Int?
+    public internal(set) var workerPort: Int?
     private var wakeObserver: NSObjectProtocol?
     private var cyberMediaHandlers: [String: [String: String]] = [:]
 
@@ -100,10 +105,39 @@ class ServerManager: @unchecked Sendable {
         }
     }
     
+    // =========================================================================================
+    // [BUG FIX: Node Worker Orphan Process Leaks & Auto-Termination via Pipe Closure]
+    // 1. Problem:
+    //    When TaiChi terminates abruptly, restarts the gateway, or crashes, previously spawned
+    //    Node `.taichi_worker.js` processes could be orphaned and continue running indefinitely,
+    //    wasting CPU, memory, and leaking network ports.
+    // 2. Resolution:
+    //    - Added `process.stdin.resume(); process.stdin.on('end', () => process.exit(0));` to the
+    //      generated `.taichi_worker.js` and attached a standardInput Pipe in Swift. When the parent
+    //      terminates or crashes, the OS closes the pipe, sending EOF to stdin so Node auto-exits.
+    //    - In `startWorker()`, explicitly terminate any active `workerProcess` instance and execute
+    //      `/usr/bin/pkill -f ".taichi_worker.js"` to terminate any preexisting orphan worker instances
+    //      prior to spawning the new one.
+    // 3. Caveats:
+    //    - The `pkill` command returns status 1 if no process matched; this should not be treated as a failure.
+    // =========================================================================================
     @MainActor
     private func startWorker() {
         let scriptsDir = (TaiChiSettings.shared.scriptsPath as NSString).expandingTildeInPath
         let workerScriptPath = (scriptsDir as NSString).appendingPathComponent(".taichi_worker.js")
+        
+        // Terminate any existing worker held by this manager
+        if let existing = self.workerProcess, existing.isRunning {
+            existing.terminate()
+            self.workerProcess = nil
+        }
+        
+        // Terminate any leftover orphaned worker processes
+        let cleanup = Foundation.Process()
+        cleanup.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        cleanup.arguments = ["-f", ".taichi_worker.js"]
+        try? cleanup.run()
+        cleanup.waitUntilExit()
         
         let workerCode = """
         const http = require('http');
@@ -111,6 +145,11 @@ class ServerManager: @unchecked Sendable {
         const fs = require('fs');
         const path = require('path');
         const SCRIPTS_DIR = process.argv[2] || __dirname;
+
+        // Auto-terminate when parent process dies or pipe closes
+        process.stdin.resume();
+        process.stdin.on('end', () => process.exit(0));
+
         const server = http.createServer(async (req, res) => {
             const parsedUrl = url.parse(req.url, true);
             if (!parsedUrl.pathname.startsWith('/script/')) {
@@ -149,7 +188,10 @@ class ServerManager: @unchecked Sendable {
         
         let process = Foundation.Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-l", "-c", "node \"\(workerScriptPath)\" \"\(scriptsDir)\""]
+        process.arguments = ["-l", "-c", "exec node \"\(workerScriptPath)\" \"\(scriptsDir)\""]
+        
+        let inPipe = Pipe()
+        process.standardInput = inPipe
         
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -297,7 +339,7 @@ class ServerManager: @unchecked Sendable {
         }
     }
     
-    private func refreshCyberAppsStatus() {
+    func refreshCyberAppsStatus() {
         print("🔍 Refreshing Cyber apps status...")
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -832,7 +874,7 @@ class ServerManager: @unchecked Sendable {
     
     // MARK: - Helper Methods
     
-    private func findAvailablePort(startPort: Int = 9222) -> Int {
+    func findAvailablePort(startPort: Int = 9222) -> Int {
         var port = startPort
         while port < 9300 {
             let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -859,303 +901,78 @@ class ServerManager: @unchecked Sendable {
         return startPort
     }
     
-    // MARK: - Launcher API (Alfred)
+    // MARK: - Launcher API (Unified Gateway)
     
     private func handleLauncherFilter(_ request: HttpRequest) -> HttpResponse {
-        refreshCyberAppsStatus()
+        var query = request.queryParams.first(where: { $0.0 == "q" })?.1 ?? ""
+        var scope = request.queryParams.first(where: { $0.0 == "scope" })?.1
         
-        let scriptsDir = DispatchQueue.main.sync { TaiChiSettings.shared.scriptsPath as NSString }.expandingTildeInPath
-        let appsDir = (scriptsDir as NSString).appendingPathComponent("apps")
-        
-        var items: [[String: Any]] = []
-        let fm = FileManager.default
-        let query = request.queryParams.first(where: { $0.0 == "q" })?.1.lowercased() ?? ""
-        
-        let activeInjectedAppIDs = DispatchQueue.main.sync { 
-            TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+        if let decoded = query.removingPercentEncoding {
+            query = decoded
         }
-        let runningApps = NSWorkspace.shared.runningApplications
+        query = query.replacingOccurrences(of: "+", with: " ")
+        if let s = scope, let decoded = s.removingPercentEncoding {
+            scope = decoded
+        }
         
-        var targetAppIds = Set<String>()
-        
-        // 1. Add apps from appsDir (user-configured scripts)
-        if let contents = try? fm.contentsOfDirectory(atPath: appsDir) {
-            for appId in contents {
-                var isDirectory: ObjCBool = false
-                let appPath = (appsDir as NSString).appendingPathComponent(appId)
-                if fm.fileExists(atPath: appPath, isDirectory: &isDirectory), isDirectory.boolValue {
-                    targetAppIds.insert(appId)
-                }
+        if query.isEmpty && (scope == nil || scope?.isEmpty == true) {
+            if let bodyStr = String(bytes: request.body, encoding: .utf8), !bodyStr.isEmpty,
+               let data = bodyStr.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let q = json["q"] as? String { query = q }
+                if let s = json["scope"] as? String { scope = s }
             }
         }
         
-        // 2. Add currently active injected apps
-        for appId in activeInjectedAppIDs {
-            targetAppIds.insert(appId)
+        let box = SyncBox<[[String: Any]]>([])
+        let semaphore = DispatchSemaphore(value: 0)
+        
+        Task {
+            let res = await LauncherGateway.shared.filter(rawQuery: query, explicitScope: scope)
+            box.value = res
+            semaphore.signal()
         }
         
-        // 3. If querying, globally search for installed apps to allow ad-hoc injection
-        if !query.isEmpty {
-            let appDirs = ["/Applications", "/System/Applications", (NSHomeDirectory() as NSString).appendingPathComponent("Applications")]
-            for dir in appDirs {
-                let dirURL = URL(fileURLWithPath: dir)
-                if let enumerator = fm.enumerator(at: dirURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) {
-                    for case let url as URL in enumerator {
-                        if url.pathExtension == "app" {
-                            let appName = url.deletingPathExtension().lastPathComponent.lowercased()
-                            if appName.contains(query) {
-                                // MUST be a Chromium-based app (Electron, CEF, Chrome, etc.)
-                                let frameworksURL = url.appendingPathComponent("Contents/Frameworks")
-                                var isChromium = false
-                                if let frameworkContents = try? fm.contentsOfDirectory(atPath: frameworksURL.path) {
-                                    for item in frameworkContents {
-                                        if item.contains("Electron") || item.contains("Chromium") || item.contains("Chrome") || item.contains("CEF") {
-                                            isChromium = true
-                                            break
-                                        }
-                                    }
-                                }
-                                
-                                if isChromium {
-                                    if let bundleId = Bundle(url: url)?.bundleIdentifier {
-                                        targetAppIds.insert(bundleId)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        for appId in targetAppIds {
-            if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appId) {
-                let appName = appURL.deletingPathExtension().lastPathComponent
-                
-                if !query.isEmpty && !appName.lowercased().contains(query) && !appId.lowercased().contains(query) {
-                    continue
-                }
-                
-                let isInjected = activeInjectedAppIDs.contains(appId)
-                let isRunning = runningApps.contains(where: { $0.bundleIdentifier == appId })
-                
-                var itemTitle = appName
-                if isInjected {
-                    itemTitle += " (Cyber 版)"
-                }
-                
-                var subtitle = "点击启动进入 Cyber 模式"
-                var mods: [String: Any]? = nil
-                
-                if isInjected {
-                    subtitle = "⚡️ 已注入，回车直接激活窗口"
-                    if let app = runningApps.first(where: { $0.bundleIdentifier == appId }),
-                       let port = self.getDebuggingPort(for: app.processIdentifier) {
-                        subtitle += " (Port: \(port))"
-                    }
-                    
-                    mods = [
-                        "cmd": [
-                            "valid": true,
-                            "arg": "{\"action\":\"quit\", \"appId\":\"\(appId)\"}",
-                            "subtitle": "🛑 退出该应用 (Cmd + Enter)"
-                        ]
-                    ]
-                } else if isRunning {
-                    subtitle = "⚡︎ 正在普通运行，回车将强制重启并注入"
-                }
-                
-                var item: [String: Any] = [
-                    "title": itemTitle,
-                    "subtitle": subtitle,
-                    "arg": "open:\(appId)",
-                    "icon": ["type": "fileicon", "path": appURL.path]
-                ]
-                
-                if let mods = mods {
-                    item["mods"] = mods
-                }
-                
-                items.append(item)
-            }
-        }
-        
-        return jsonResponse(["items": items])
+        _ = semaphore.wait(timeout: .now() + 10.0)
+        return jsonResponse(["items": box.value])
     }
     
     private func handleLauncherAction(_ request: HttpRequest) -> HttpResponse {
-        guard let payload = request.queryParams.first(where: { $0.0 == "payload" })?.1 else {
+        var payload = request.queryParams.first(where: { $0.0 == "payload" })?.1
+        if let p = payload, let decoded = p.removingPercentEncoding {
+            payload = decoded
+        }
+        
+        if payload == nil || payload?.isEmpty == true {
+            if let bodyStr = String(bytes: request.body, encoding: .utf8), !bodyStr.isEmpty {
+                if let data = bodyStr.data(using: .utf8),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let p = json["payload"] as? String {
+                    payload = p
+                } else {
+                    payload = bodyStr
+                }
+            }
+        }
+        
+        guard let finalPayload = payload, !finalPayload.isEmpty else {
             return .badRequest(nil)
         }
         
-        guard let data = payload.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: String],
-              let action = json["action"],
-              let appId = json["appId"] else {
-            // Fallback for simple "open:appId" payloads
-            let parts = payload.split(separator: ":", maxSplits: 1)
-            let action = parts.count == 2 ? String(parts[0]) : "open"
-            let finalAppId = parts.count == 2 ? String(parts[1]) : String(payload)
-            return performLauncherAction(action: action, appId: finalAppId)
+        let box = SyncBox<Bool>(false)
+        let semaphore = DispatchSemaphore(value: 0)
+        
+        Task {
+            let res = await LauncherGateway.shared.handleAction(payload: finalPayload)
+            box.value = res
+            semaphore.signal()
         }
         
-        return performLauncherAction(action: action, appId: appId)
+        _ = semaphore.wait(timeout: .now() + 10.0)
+        return jsonResponse(["success": box.value])
     }
     
-    private func performLauncherAction(action: String, appId: String) -> HttpResponse {
-        let finalAppId = appId
-        let runningApps = NSWorkspace.shared.runningApplications
-        
-        if action == "quit" {
-            if let appToQuit = runningApps.first(where: { $0.bundleIdentifier == finalAppId }) {
-                appToQuit.terminate()
-            }
-            let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: finalAppId)
-            let appName = appURL?.deletingPathExtension().lastPathComponent ?? finalAppId
-            DispatchQueue.main.async { [finalAppId] in
-                TaiChiSettings.shared.activeInjectedApps.removeAll(where: { $0.id == finalAppId })
-            }
-            Task {
-                try? await HSManager.shared.sendAction(action: "hotkey.unregister", params: ["app": appName, "profileId": "taichi_inspector"])
-            }
-            return jsonResponse(["success": true, "action": "quit", "appId": finalAppId])
-        }
-        
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: finalAppId) else {
-            return jsonResponse(["error": "Application not found for bundle ID \(finalAppId)"], statusCode: 404)
-        }
-        
-        let activeInjectedAppIDs = DispatchQueue.main.sync {
-            TaiChiSettings.shared.activeInjectedApps.map { $0.id }
-        }
-        
-        let isRunning = runningApps.contains(where: { $0.bundleIdentifier == finalAppId })
-        let isInjected = activeInjectedAppIDs.contains(finalAppId)
-        
-        if isInjected {
-            // Case A: Already injected. Just bring to front.
-            if let app = runningApps.first(where: { $0.bundleIdentifier == finalAppId }) {
-                app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
-            } else {
-                // Not actually running? Clean up state.
-                let appName = appURL.deletingPathExtension().lastPathComponent
-                DispatchQueue.main.async { [finalAppId] in
-                    TaiChiSettings.shared.activeInjectedApps.removeAll(where: { $0.id == finalAppId })
-                }
-                Task {
-                    try? await HSManager.shared.sendAction(action: "hotkey.unregister", params: ["app": appName, "profileId": "taichi_inspector"])
-                }
-            }
-            return jsonResponse(["success": true, "action": "activate", "appId": finalAppId])
-        }
-        
-        // Helper to launch with CDP
-        let launchWithCDP: @Sendable () -> Void = { [weak self, finalAppId, appURL] in
-            guard let self = self else { return }
-            let targetPort = self.findAvailablePort(startPort: 9222)
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.arguments = ["--remote-debugging-port=\(targetPort)"]
-            configuration.activates = true
-            
-            NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { [weak self] (app: NSRunningApplication?, error: Error?) in
-                if let error = error {
-                    print("❌ Failed to open \(finalAppId): \(error.localizedDescription)")
-                    return
-                }
-                
-                guard let self = self, let workerPort = self.workerPort else { return }
-                let appName = app?.localizedName ?? appURL.deletingPathExtension().lastPathComponent
-                let pid = app?.processIdentifier
-                
-                DispatchQueue.main.async { [finalAppId, appName, pid, targetPort] in
-                    let monitoredApp = MonitoredApp(id: finalAppId, name: appName, path: appURL.path, pid: pid, port: targetPort)
-                    if let index = TaiChiSettings.shared.activeInjectedApps.firstIndex(where: { $0.id == finalAppId }) {
-                        var existingApp = TaiChiSettings.shared.activeInjectedApps[index]
-                        existingApp.pid = pid
-                        existingApp.port = targetPort
-                        TaiChiSettings.shared.activeInjectedApps[index] = existingApp
-                    } else {
-                        TaiChiSettings.shared.activeInjectedApps.append(monitoredApp)
-                        
-                        // [Bug Fix]
-                        // 1. Problem: 临时注入应用时，寻星镜快捷键被硬编码为 `cmd + alt + I`。这会导致如果目标应用（如 Antigravity 这种 Electron 应用）在全局静默拦截了默认的开发者工具快捷键，寻星镜就无法激活。
-                        // 2. Resolution: 移除硬编码，改为动态读取用户在前端配置好的 `TaiChiSettings.shared.hotkeyTelescope`，从而允许用户避开冲突的热键组合。
-                        // 3. Caveats: 确保该 `hotkeyTelescope` 与 `taichi_env.lua` 中的配置保持一致，且避免用户不小心在此处配置了其他已被严重拦截的原生快捷键。
-                        let hotkey = TaiChiSettings.shared.hotkeyTelescope
-                        Task {
-                            let bindings: [[String: Any]] = [
-                                [
-                                    "mods": hotkey.modifiers,
-                                    "key": hotkey.key,
-                                    "type": "lua",
-                                    "luaAction": "taichi.triggerInspector"
-                                ]
-                            ]
-                            let params: [String: Any] = [
-                                "app": appName,
-                                "profileId": "taichi_inspector",
-                                "bindings": bindings
-                            ]
-                            try? await HSManager.shared.sendAction(action: "hotkey.register", params: params)
-                        }
-                    }
-                }
-                
-                // Wait slightly to ensure app starts and CDP is up
-                DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [finalAppId] in
-                    print("🚀 \(finalAppId) launched on CDP port \(targetPort). Invoking worker...")
-                    var components = URLComponents()
-                    components.scheme = "http"
-                    components.host = "127.0.0.1"
-                    components.port = workerPort
-                    components.path = "/script/apps/\(finalAppId)/worker/index"
-                    components.queryItems = [URLQueryItem(name: "port", value: String(targetPort))]
-                    
-                    if let url = components.url {
-                        let task = URLSession.shared.dataTask(with: url) { data, response, error in
-                            if let error = error {
-                                print("⚠️ Worker trigger failed for \(finalAppId): \(error.localizedDescription)")
-                            } else if let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 {
-                                print("✅ Worker trigger succeeded for \(finalAppId)")
-                            } else {
-                                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-                                print("⚠️ Worker trigger returned status \(statusCode)")
-                            }
-                        }
-                        task.resume()
-                    }
-                }
-            }
-        }
-        
-        if isRunning {
-            // Case C: Running but not injected. Force quit and relaunch.
-            if let appToQuit = runningApps.first(where: { $0.bundleIdentifier == finalAppId }) {
-                appToQuit.terminate()
-                
-                // Poll until the app is actually dead, then launch
-                DispatchQueue.global().async { [launchWithCDP] in
-                    var attempts = 0
-                    while !appToQuit.isTerminated && attempts < 20 {
-                        Thread.sleep(forTimeInterval: 0.25)
-                        attempts += 1
-                    }
-                    if !appToQuit.isTerminated {
-                        appToQuit.forceTerminate()
-                        Thread.sleep(forTimeInterval: 0.5)
-                    }
-                    launchWithCDP()
-                }
-            }
-            return jsonResponse(["success": true, "action": "relaunch_inject", "appId": finalAppId])
-        } else {
-            // Case B: Not running.
-            launchWithCDP()
-            return jsonResponse(["success": true, "action": "launch_inject", "appId": finalAppId])
-        }
-    }
-    
-    private func getDebuggingPort(for pid: pid_t) -> String? {
+    func getDebuggingPort(for pid: pid_t) -> String? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
         task.arguments = ["-ww", "-p", "\(pid)", "-o", "command="]
@@ -1212,17 +1029,34 @@ class ServerManager: @unchecked Sendable {
         }
     }
 
+    // =============================================================================
+    // [BUG FIX DOCUMENTATION - Task fix_wallpaper_target_screen_mapping_003]
+    // 1. Problem Fixed:
+    //    Wallpaper endpoints (/api/wallpaper/change, /api/wallpaper/previous, /api/wallpaper/save)
+    //    only parsed `screenUUID` from the request JSON, dropping `screenName`. When an
+    //    external screen was referenced by name or had a transient UUID, WallpaperManager
+    //    could not resolve the target screen.
+    // 2. Resolution:
+    //    Parse both `screenUUID` and `screenName` from the JSON body in handleWallpaperChange,
+    //    handleWallpaperPrevious, and handleWallpaperSave, and pass both parameters to
+    //    WallpaperManager.shared methods.
+    // 3. Caveats:
+    //    WallpaperManager methods handle dual fallback and verify target screens before
+    //    triggering wallpaper updates.
+    // =============================================================================
     private func handleWallpaperChange(_ request: HttpRequest) -> HttpResponse {
         guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
         let bodyBytes = request.body
         let bodyData = Data(bodyBytes)
         var screenUUID: String? = nil
+        var screenName: String? = nil
         if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
             screenUUID = json["screenUUID"] as? String
+            screenName = json["screenName"] as? String
         }
         
         Task {
-            await WallpaperManager.shared.forceChange(screenUUID: screenUUID)
+            await WallpaperManager.shared.forceChange(screenUUID: screenUUID, screenName: screenName)
         }
         return jsonResponse(["status": "ok", "action": "change_started"])
     }
@@ -1231,12 +1065,14 @@ class ServerManager: @unchecked Sendable {
         guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
         let bodyData = Data(request.body)
         var screenUUID: String? = nil
+        var screenName: String? = nil
         if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
             screenUUID = json["screenUUID"] as? String
+            screenName = json["screenName"] as? String
         }
         
         Task {
-            await WallpaperManager.shared.revertToPrevious(screenUUID: screenUUID)
+            await WallpaperManager.shared.revertToPrevious(screenUUID: screenUUID, screenName: screenName)
         }
         return jsonResponse(["status": "ok", "action": "previous_started"])
     }
@@ -1245,12 +1081,14 @@ class ServerManager: @unchecked Sendable {
         guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
         let bodyData = Data(request.body)
         var screenUUID: String? = nil
+        var screenName: String? = nil
         if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
             screenUUID = json["screenUUID"] as? String
+            screenName = json["screenName"] as? String
         }
         
         Task {
-            await WallpaperManager.shared.saveCurrent(screenUUID: screenUUID)
+            await WallpaperManager.shared.saveCurrent(screenUUID: screenUUID, screenName: screenName)
         }
         return jsonResponse(["status": "ok", "action": "save_started"])
     }

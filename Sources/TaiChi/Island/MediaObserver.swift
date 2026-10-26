@@ -1,7 +1,23 @@
 import Foundation
 import SwiftUI
-
 import Combine
+
+// =========================================================================================
+// [BUG FIX: AppleScript Compilation Storm & Spurious MediaApp Published Updates]
+// 1. Problem:
+//    - `performPolling` previously re-created and re-compiled `NSAppleScript` strings every 2 seconds
+//      for every running media app. This dynamic compilation repeatedly triggered macOS OSA compilation
+//      and security scans (XProtect Remediator / YARA rules), causing periodic CPU spikes and battery drain.
+//    - `activeMediaApps` was assigned unconditionally on every poll cycle, triggering `@Published`
+//      notifications and SwiftUI re-renders even when app states had not changed.
+// 2. Resolution:
+//    - Added a dedicated serial queue (`pollingQueue`) and an `NSAppleScript` cache (`compiledScripts: [String: NSAppleScript]`).
+//      Scripts are compiled once with `compileAndReturnError` and reused directly for subsequent executions.
+//    - Guarded `@Published` assignment with `if self.activeMediaApps != newActiveApps { self.activeMediaApps = newActiveApps }`.
+// 3. Caveats:
+//    - Restrict read/write access to `compiledScripts` to `pollingQueue` to guarantee thread safety.
+//    - If an app terminates or starts, cached script objects remain valid because they reference bundle IDs.
+// =========================================================================================
 
 struct ActiveMediaApp: Equatable, Identifiable {
     var id: String { bundleIdentifier }
@@ -45,6 +61,9 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
     private var buffer = Data()
     private var pollerTimer: Timer?
     
+    private let pollingQueue = DispatchQueue(label: "com.taichi.MediaObserver.pollingQueue")
+    private var compiledScripts: [String: NSAppleScript] = [:]
+    
     init() {
         startStreaming()
         startPoller()
@@ -62,6 +81,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                 self.state.isPlaying = false
                 self.state.artworkData = nil
                 self.stopPoller()
+                LyricManager.shared.clearLyrics()
             }
         }
     }
@@ -128,9 +148,9 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                 return
             }
             
-            // Background the heavy lifting
-            Task.detached {
-                self.performPolling(configuredApps: configuredApps)
+            // Execute on dedicated serial queue with precompiled scripts
+            self.pollingQueue.async { [weak self] in
+                self?.performPolling(configuredApps: configuredApps)
             }
         }
     }
@@ -141,32 +161,43 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         
         for app in configuredApps {
             if runningApps.contains(where: { $0.bundleIdentifier == app.id }) {
-                // Determine play state via AppleScript
-                let scriptSource = """
-                tell application id "\(app.id)"
-                    set playState to player state as string
-                    set trackName to name of current track as string
-                    return playState & "|" & trackName
-                end tell
-                """
+                let scriptKey = "poll_\(app.id)"
+                let script: NSAppleScript
+                if let cached = self.compiledScripts[scriptKey] {
+                    script = cached
+                } else {
+                    let scriptSource = """
+                    tell application id "\(app.id)"
+                        set playState to player state as string
+                        set trackName to name of current track as string
+                        return playState & "|" & trackName
+                    end tell
+                    """
+                    if let newScript = NSAppleScript(source: scriptSource) {
+                        var compileError: NSDictionary?
+                        newScript.compileAndReturnError(&compileError)
+                        self.compiledScripts[scriptKey] = newScript
+                        script = newScript
+                    } else {
+                        continue
+                    }
+                }
                 
                 var isPlaying = false
                 var title: String? = nil
                 var playStateString = "unknown"
                 
-                if let script = NSAppleScript(source: scriptSource) {
-                    var errorInfo: NSDictionary?
-                    let result = script.executeAndReturnError(&errorInfo)
-                    
-                    if errorInfo == nil, let output = result.stringValue {
-                        let parts = output.components(separatedBy: "|")
-                        if parts.count >= 1 {
-                            playStateString = parts[0].lowercased()
-                            isPlaying = playStateString == "playing"
-                        }
-                        if parts.count >= 2 {
-                            title = parts[1]
-                        }
+                var errorInfo: NSDictionary?
+                let result = script.executeAndReturnError(&errorInfo)
+                
+                if errorInfo == nil, let output = result.stringValue {
+                    let parts = output.components(separatedBy: "|")
+                    if parts.count >= 1 {
+                        playStateString = parts[0].lowercased()
+                        isPlaying = playStateString == "playing"
+                    }
+                    if parts.count >= 2 {
+                        title = parts[1]
                     }
                 }
                 
@@ -175,7 +206,9 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         }
         
         DispatchQueue.main.async {
-            self.activeMediaApps = newActiveApps
+            if self.activeMediaApps != newActiveApps {
+                self.activeMediaApps = newActiveApps
+            }
         }
     }
     
@@ -220,6 +253,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
             
             DispatchQueue.main.async {
                 let wasPlaying = self.state.isPlaying
+                let oldTitle = self.state.title
                 var newState = self.state
                 
                 if let title = payload.title { newState.title = title }
@@ -228,6 +262,11 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                 if let elapsedTime = payload.elapsedTime {
                     newState.elapsedTime = elapsedTime
                     newState.lastElapsedTimeUpdate = Date()
+                }
+                
+                if newState.title != oldTitle {
+                    newState.isLiked = nil // Reset like status on track change
+                    LyricManager.shared.fetchLyrics(title: newState.title, artist: newState.artist)
                 }
                 if let playing = payload.playing {
                     newState.isPlaying = playing
@@ -259,8 +298,8 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                 } else if wasPlaying && !newState.isPlaying {
                     let configuredApps = TaiChiSettings.shared.mediaApps
                     if !configuredApps.isEmpty {
-                        Task.detached {
-                            self.performPolling(configuredApps: configuredApps)
+                        self.pollingQueue.async { [weak self] in
+                            self?.performPolling(configuredApps: configuredApps)
                         }
                     }
                     self.stopPoller()
@@ -333,12 +372,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         
         // [BUG FIX: Mouse cursor warping/flickering to notch area]
         // macOS HID event taps (cghidEventTap) for systemDefined events can physically warp the mouse cursor.
-        // Previously, `NSEvent.mouseLocation` (which uses a bottom-left origin) was passed here.
-        // However, passing NSEvent's bottom-left coordinates into a CGEvent (which expects top-left) 
-        // can cause the cursor to physically jump or "snap" to incorrect locations (e.g., the notch area) 
-        // upon clicking media controls, especially on multi-monitor setups.
-        // Fix: We fetch the precise real-time coordinate directly from the CGEvent coordinate space 
-        // (top-left origin) and explicitly assign it to the underlying CGEvent before posting.
+        // Fetch real-time coordinate directly from CGEvent coordinate space (top-left origin).
         let cgLoc = CGEvent(source: nil)?.location ?? .zero
         
         let eventDown = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: NSEvent.ModifierFlags(rawValue: 0xA00), timestamp: 0, windowNumber: 0, context: nil, subtype: 8, data1: Int((keyCode << 16) | 0x0A), data2: -1)
@@ -352,6 +386,20 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
             cgUp.location = cgLoc
             cgUp.post(tap: .cgSessionEventTap)
         }
+    }
+
+    func isPlaybackControlSupported() -> Bool {
+        let bundleId = state.bundleIdentifier
+        if bundleId.isEmpty { return false }
+        
+        // 1. Check custom cyber media handler
+        if ServerManager.shared.getCyberMediaHandler(appId: bundleId, command: "playpause") != nil {
+            return true
+        }
+        
+        // 2. Built-in AppleScript supported apps
+        let supportedApps = ["com.apple.Music", "com.spotify.client"]
+        return supportedApps.contains(bundleId)
     }
 
     func sendTargetedCommand(_ commandId: Int) {
@@ -404,11 +452,9 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
             }
         }
         
-        // 3. Fallback to global broadcast using hardware keys (more robust than MR for Electron apps like MusicFree)
+        // 3. Fallback to global broadcast using hardware keys
         print("ℹ️ [MediaObserver] Sending global broadcast command \(commandId) via hardware key simulation")
         simulateMediaKey(commandId)
-        
-
     }
     
     func seek(to time: Double) {

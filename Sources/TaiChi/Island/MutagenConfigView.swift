@@ -21,58 +21,143 @@ public struct MutagenConfigView: View {
             
             detailContent
         }
+        .toolbar {
+            ToolbarItemGroup(placement: .automatic) {
+                Button(action: {
+                    manager.resumeAll()
+                }) {
+                    Label("全部开始", systemImage: "play.fill")
+                }
+                .help("恢复所有 Mutagen 任务")
+                
+                Button(action: {
+                    manager.pauseAll()
+                }) {
+                    Label("全部暂停", systemImage: "pause.fill")
+                }
+                .help("暂停所有 Mutagen 任务")
+            }
+        }
         .onAppear {
             manager.loadMappings()
             manager.fetchSessions()
-            if selectedSessionId == nil, let first = manager.sessions.first {
-                selectedSessionId = first.id
+            manager.loadArchivedSessions()
+            
+            if let pending = manager.pendingSelectionId {
+                selectedSessionId = pending
+                manager.pendingSelectionId = nil
+            } else if selectedSessionId == nil {
+                selectedSessionId = manager.sessions.first?.id ?? manager.archivedSessions.first?.id
             }
         }
-        .onChange(of: selectedSessionId) { _ in
+        .onChange(of: selectedSessionId, perform: { _ in
             errorMessage = nil
             newIgnoreText = ""
-        }
-        .onChange(of: manager.sessions) { newSessions in
-            if selectedSessionId == nil, let first = newSessions.first {
-                selectedSessionId = first.id
+        })
+        .onChange(of: manager.sessions, perform: { newSessions in
+            if selectedSessionId == nil {
+                selectedSessionId = newSessions.first?.id ?? manager.archivedSessions.first?.id
             }
-        }
+        })
+        .onChange(of: manager.pendingSelectionId, perform: { newId in
+            if let id = newId {
+                selectedSessionId = id
+                manager.pendingSelectionId = nil
+            }
+        })
     }
     
     // MARK: - Sidebar List
     
     private var sidebarList: some View {
-        List(manager.sessions, selection: $selectedSessionId) { session in
-            let sessionType = manager.sessionType(for: session)
-            
-            HStack(spacing: 8) {
-                sidebarIcon(for: sessionType)
-                    .frame(width: 18, height: 18)
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.name ?? session.identifier)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
-                    
-                    HStack(spacing: 4) {
-                        if case .unlinkedProject = sessionType {
-                            Text("未绑定")
-                                .font(.caption2)
-                                .foregroundColor(.orange)
-                        }
-                        
-                        if let status = session.status {
-                            Text(status)
-                                .font(.caption2)
-                                .foregroundColor((status.lowercased().contains("watching")) ? .green : .secondary)
+        VStack(spacing: 0) {
+            List(selection: $selectedSessionId) {
+                if !manager.sessions.isEmpty {
+                    Section(header: Text("活跃任务")) {
+                        ForEach(manager.sessions) { session in
+                            sidebarRow(for: session)
+                                .tag(session.id)
                         }
                     }
                 }
-                Spacer()
+                if !manager.archivedSessions.isEmpty {
+                    Section(header: Text("已停止任务")) {
+                        ForEach(manager.archivedSessions) { session in
+                            sidebarRow(for: session)
+                                .tag(session.id)
+                        }
+                    }
+                }
             }
-            .padding(.vertical, 3)
-            .tag(session.id)
+            
+            Divider()
+            
+            HStack(spacing: 12) {
+                Button(action: {
+                    manager.resumeAll()
+                }) {
+                    Label("全部开始", systemImage: "play.fill")
+                }
+                .buttonStyle(BorderlessButtonStyle())
+                .font(.caption)
+                
+                Spacer()
+                
+                Button(action: {
+                    manager.pauseAll()
+                }) {
+                    Label("全部暂停", systemImage: "pause.fill")
+                }
+                .buttonStyle(BorderlessButtonStyle())
+                .font(.caption)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
         }
+    }
+    
+    @ViewBuilder
+    private func sidebarRow(for session: MutagenSession) -> some View {
+        let sessionType = manager.sessionType(for: session)
+        
+        HStack(spacing: 8) {
+            sidebarIcon(for: sessionType)
+                .frame(width: 18, height: 18)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.name ?? session.identifier)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                
+                HStack(spacing: 4) {
+                    if case .unlinkedProject = sessionType {
+                        Text("未绑定")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    }
+                    
+                    if let status = session.status {
+                        Text(status)
+                            .font(.caption2)
+                            .foregroundColor((status.lowercased().contains("watching")) ? .green : .secondary)
+                    }
+                }
+            }
+            
+            Spacer()
+            
+            if session.hasConflicts {
+                HStack(spacing: 3) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 11))
+                    Text("\(session.conflictCount)")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                }
+                .foregroundColor(.red)
+            }
+        }
+        .padding(.vertical, 3)
     }
     
     @ViewBuilder
@@ -100,34 +185,173 @@ public struct MutagenConfigView: View {
     
     @ViewBuilder
     private var detailContent: some View {
-        if let selectedSessionId = selectedSessionId,
-           let session = manager.sessions.first(where: { $0.id == selectedSessionId }) {
-            let sessionType = manager.sessionType(for: session)
-            
-            VStack(alignment: .leading, spacing: 14) {
-                detailHeader(session: session, type: sessionType)
+        if let selectedSessionId = selectedSessionId {
+            if let session = manager.sessions.first(where: { $0.id == selectedSessionId }) {
+                let sessionType = manager.sessionType(for: session)
                 
-                switch sessionType {
-                case .unlinkedProject(let projectId):
-                    unlinkedProjectView(session: session, projectId: projectId)
-                case .linkedProject(let projectId, let configPath):
-                    linkedProjectView(session: session, projectId: projectId, configPath: configPath)
-                case .normal:
-                    normalTaskView(session: session)
+                VStack(alignment: .leading, spacing: 14) {
+                    detailHeader(session: session, type: sessionType)
+                    
+                    if session.hasConflicts {
+                        conflictCard(session: session)
+                    }
+                    
+                    switch sessionType {
+                    case .unlinkedProject(let projectId):
+                        unlinkedProjectView(session: session, projectId: projectId)
+                    case .linkedProject(let projectId, let configPath):
+                        linkedProjectView(session: session, projectId: projectId, configPath: configPath)
+                    case .normal:
+                        normalTaskView(session: session)
+                    }
+                }
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if let session = manager.archivedSessions.first(where: { $0.id == selectedSessionId }) {
+                archivedDetailContent(for: session)
+            } else {
+                emptySelectionView
+            }
+        } else {
+            emptySelectionView
+        }
+    }
+    
+    // MARK: - Conflict Card
+    
+    @ViewBuilder
+    private func conflictCard(session: MutagenSession) -> some View {
+        let alphaPath = session.alpha?.path ?? session.alpha?.url ?? ""
+        let conflicts = session.conflicts ?? []
+        
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.red)
+                    .font(.system(size: 15))
+                
+                Text("检测到 \(session.conflictCount) 处文件冲突")
+                    .font(.headline)
+                    .foregroundColor(.red)
+                
+                Spacer()
+            }
+            
+            if conflicts.count > 5 {
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(conflicts) { conflict in
+                            conflictRow(conflict: conflict, alphaPath: alphaPath)
+                        }
+                    }
+                }
+                .frame(maxHeight: 180)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(conflicts) { conflict in
+                        conflictRow(conflict: conflict, alphaPath: alphaPath)
+                    }
                 }
             }
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else {
-            VStack(spacing: 8) {
-                Image(systemName: "tray")
-                    .font(.system(size: 32))
+            
+            HStack(spacing: 4) {
+                Image(systemName: "info.circle")
+                    .font(.caption)
                     .foregroundColor(.secondary)
-                Text("请选择一个 Mutagen 任务")
+                Text("在本地或远端保存修改后，Mutagen 将自动恢复同步并消除冲突。")
+                    .font(.caption)
                     .foregroundColor(.secondary)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.top, 2)
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.red.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.red.opacity(0.25), lineWidth: 1)
+                )
+        )
+    }
+    
+    @ViewBuilder
+    private func conflictRow(conflict: MutagenConflict, alphaPath: String) -> some View {
+        let root = conflict.root ?? ""
+        HStack(spacing: 8) {
+            Image(systemName: "doc.text")
+                .foregroundColor(.secondary)
+                .font(.system(size: 13))
+            
+            Text(root.isEmpty ? "未知文件" : root)
+                .font(.system(.body, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            
+            Spacer()
+            
+            Button(action: {
+                let resolvedAlpha = (alphaPath as NSString).expandingTildeInPath
+                let targetPath = (resolvedAlpha as NSString).appendingPathComponent(root)
+                let url = URL(fileURLWithPath: targetPath)
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }) {
+                Label("在访达中显示", systemImage: "folder")
+            }
+            .buttonStyle(BorderlessButtonStyle())
+            .foregroundColor(.accentColor)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
+    }
+    
+    private var emptySelectionView: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "tray")
+                .font(.system(size: 32))
+                .foregroundColor(.secondary)
+            Text("请选择一个 Mutagen 任务")
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private func archivedDetailContent(for session: MutagenSession) -> some View {
+        let sessionType = manager.sessionType(for: session)
+        
+        return VStack(alignment: .leading, spacing: 14) {
+            detailHeader(session: session, type: sessionType)
+            
+            Text("任务信息")
+                .font(.headline)
+            
+            Text("任务已停止，无法编辑 Ignore 规则。")
+                .foregroundColor(.secondary)
+            
+            Spacer()
+            
+            HStack {
+                Button("永久删除") {
+                    manager.deleteArchivedSession(id: session.id)
+                    selectedSessionId = nil
+                }
+                .foregroundColor(.red)
+                .controlSize(.large)
+                
+                Spacer()
+                
+                Button("重新开始") {
+                    manager.resumeArchivedSession(id: session.id)
+                    selectedSessionId = nil
+                }
+                .buttonStyle(BorderedProminentButtonStyle())
+                .controlSize(.large)
+            }
+            .padding(.top, 10)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
     
     // MARK: - Header
@@ -167,7 +391,15 @@ public struct MutagenConfigView: View {
             
             Spacer()
             
-            if let status = session.status {
+            if session.hasConflicts {
+                Text("存在冲突 (\(session.conflictCount))")
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.red.opacity(0.15))
+                    .foregroundColor(.red)
+                    .cornerRadius(4)
+            } else if let status = session.status {
                 Text(status)
                     .font(.caption)
                     .padding(.horizontal, 8)

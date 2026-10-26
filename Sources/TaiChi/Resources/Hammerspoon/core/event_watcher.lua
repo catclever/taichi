@@ -47,24 +47,8 @@ function M.init(taichi_env)
         watchers.space:start()
     end
 
-    -- 2. Window Focus Watcher
-    if enabled_watchers.window then
-        local ok, wf = pcall(function()
-            local w = hs.window.filter.new(nil)
-            w:subscribe(hs.window.filter.windowFocused, function(win, appName)
-                if not win then return end
-                emit("windowFocused", {
-                    appName = appName,
-                    windowTitle = win:title(),
-                    isFullScreen = win:isFullScreen(),
-                    pid = win:application() and win:application():pid() or nil,
-                    windowId = win:id()
-                })
-            end)
-            return w
-        end)
-        if ok and wf then watchers.window = wf end
-    end
+    -- 2. Window Focus Watcher (Removed for power optimization)
+    -- Global window filtering is highly intensive and currently unused by the backend.
 
     -- 3. App Launched/Activated Watcher
     if enabled_watchers.app then
@@ -91,11 +75,23 @@ function M.init(taichi_env)
         watchers.wifi:start()
     end
 
+    -- =============================================================================
+    -- [BUG FIX DOCUMENTATION - Task fix_wallpaper_target_screen_mapping_003]
+    -- 1. Problem Fixed:
+    --    Line 82 called `utils.getScreens({ includeVirtual = true })`, which is undefined
+    --    in `v3.core.utils`. This caused a Lua runtime exception inside reportScreens(),
+    --    silently failing screen topology reporting and preventing `screensChanged` events
+    --    from reaching TaiChi.
+    -- 2. Resolution:
+    --    Replaced `utils.getScreens(...)` with `hs.screen.allScreens()`.
+    -- 3. Caveats:
+    --    Ensure getUUID() handles nil or empty string by falling back to tostring(s:id()).
+    -- =============================================================================
     -- 5. Screen Topology Watcher
     if enabled_watchers.screen then
         local function reportScreens()
             local screens = {}
-            for _, s in ipairs(utils.getScreens({ includeVirtual = true })) do
+            for _, s in ipairs(hs.screen.allScreens()) do
                 local uuid = s:getUUID()
                 if type(uuid) ~= "string" or uuid == "" then
                     uuid = tostring(s:id())

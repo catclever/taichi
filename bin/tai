@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""
+TaiChi Terminal Launcher CLI (tai)
+Interactive terminal interface to the TaiChi Unified Gateway.
+"""
+
+import sys
+import os
+import json
+import urllib.request
+import urllib.parse
+import urllib.error
+import subprocess
+import shutil
+
+GATEWAY_PORT = int(os.environ.get("TAICHI_PORT", 9216))
+GATEWAY_URL = f"http://127.0.0.1:{GATEWAY_PORT}"
+
+# ANSI Colors
+BOLD = "\033[1m"
+DIM = "\033[2m"
+CYAN = "\033[36m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
+RESET = "\033[0m"
+
+
+def fetch_filter(query: str = "") -> list:
+    """Queries the launcher filter API."""
+    encoded_q = urllib.parse.quote(query)
+    url = f"{GATEWAY_URL}/api/launcher/filter?q={encoded_q}"
+    req = urllib.request.Request(url, headers={"User-Agent": "tai-cli/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as res:
+            if res.status == 200:
+                data = json.loads(res.read().decode("utf-8"))
+                return data.get("items", [])
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, ConnectionRefusedError) or "refused" in str(e.reason).lower():
+            print(f"{RED}❌ 无法连接到 TaiChi 网关 ({GATEWAY_URL})。{RESET}", file=sys.stderr)
+            print(f"{DIM}请先确保 TaiChi 正在运行 (可通过 `open -a TaiChi` 启动)。{RESET}", file=sys.stderr)
+        else:
+            print(f"{RED}❌ 请求失败: {e}{RESET}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"{RED}❌ 解析响应失败: {e}{RESET}", file=sys.stderr)
+        sys.exit(1)
+    return []
+
+
+def trigger_action(payload: str) -> bool:
+    """Executes a launcher action."""
+    encoded_payload = urllib.parse.quote(payload)
+    url = f"{GATEWAY_URL}/api/launcher/action?payload={encoded_payload}"
+    req = urllib.request.Request(url, headers={"User-Agent": "tai-cli/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as res:
+            if res.status == 200:
+                data = json.loads(res.read().decode("utf-8"))
+                return data.get("success", False)
+    except Exception as e:
+        print(f"{RED}❌ 执行动作失败: {e}{RESET}", file=sys.stderr)
+        return False
+    return False
+
+
+def print_list(items: list):
+    """Prints items in clean terminal format."""
+    if not items:
+        print(f"{DIM}没有匹配的条目。{RESET}")
+        return
+
+    for idx, item in enumerate(items, 1):
+        title = item.get("title", "")
+        subtitle = item.get("subtitle", "")
+        arg = item.get("arg", "")
+        print(f" {CYAN}{idx:2d}.{RESET} {BOLD}{title}{RESET}")
+        if subtitle:
+            print(f"     {DIM}{subtitle}{RESET}")
+        if arg:
+            print(f"     {DIM}↳ payload: {arg}{RESET}")
+
+
+def interactive_select(initial_query: str = ""):
+    """Interactive loop using fzf with auto-drilldown on navigation cards."""
+    has_fzf = shutil.which("fzf") is not None
+    current_query = initial_query
+
+    while True:
+        items = fetch_filter(current_query)
+        if not items:
+            print(f"{YELLOW}⚠️ 未找到匹配条目: {current_query}{RESET}")
+            return
+
+        # If direct query with exact 1 actionable match, execute immediately
+        if current_query.strip() and len(items) == 1 and items[0].get("valid", True) and not items[0].get("arg", "").startswith("scope:"):
+            target = items[0]
+            arg = target.get("arg", "")
+            title = target.get("title", "")
+            print(f"{GREEN}🚀 启动: {BOLD}{title}{RESET} ({arg})")
+            trigger_action(arg)
+            return
+
+        if not sys.stdout.isatty() or not has_fzf:
+            # Non-interactive or no fzf fallback
+            print_list(items)
+            return
+
+        # Prepare fzf input
+        # Format: Display Line \t JSON Data
+        fzf_lines = []
+        for item in items:
+            title = item.get("title", "")
+            subtitle = item.get("subtitle", "")
+            arg = item.get("arg", "")
+            valid = item.get("valid", True)
+            
+            # Decorate title
+            display_title = f"{title}"
+            display_sub = f"  —  {subtitle}" if subtitle else ""
+            line = f"{display_title}{DIM}{display_sub}{RESET}\t{json.dumps(item, ensure_ascii=False)}"
+            fzf_lines.append(line)
+
+        header = f"TaiChi 启动器 [{'全部' if not current_query else current_query}] | Enter: 执行/下钻 | Esc: 退出"
+        fzf_cmd = [
+            "fzf",
+            "--ansi",
+            "--reverse",
+            "--height=45%",
+            "--delimiter=\t",
+            "--with-nth=1",
+            f"--header={header}",
+            "--prompt=tai> "
+        ]
+
+        try:
+            p = subprocess.Popen(
+                fzf_cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=None,
+                text=True
+            )
+            stdout, _ = p.communicate(input="\n".join(fzf_lines))
+            if p.returncode != 0 or not stdout.strip():
+                # User pressed Esc / Ctrl-C in fzf
+                return
+
+            selected_raw = stdout.strip().split("\t")
+            if len(selected_raw) < 2:
+                return
+
+            selected_item = json.loads(selected_raw[1])
+            arg = selected_item.get("arg", "")
+            valid = selected_item.get("valid", True)
+            autocomplete = selected_item.get("autocomplete", "").strip()
+
+            # Check if this is a navigation card (e.g. scope:cyber or valid=false)
+            if not valid or arg.startswith("scope:"):
+                # Drill down into the selected module namespace
+                next_query = autocomplete if autocomplete else (arg.split(":", 1)[1] if ":" in arg else "")
+                current_query = next_query
+                continue
+
+            # Otherwise, it's an actionable item! Execute action!
+            title = selected_item.get("title", "")
+            print(f"{GREEN}🚀 启动: {BOLD}{title}{RESET}")
+            success = trigger_action(arg)
+            if success:
+                print(f"{GREEN}✅ 执行成功 ({arg}){RESET}")
+            else:
+                print(f"{YELLOW}⚠️ 网关已处理 ({arg}){RESET}")
+            return
+
+        except KeyboardInterrupt:
+            return
+
+
+def show_help():
+    print(f"""
+{BOLD}TaiChi 终端启动器 (tai){RESET}
+
+{BOLD}用法:{RESET}
+  tai                         呼出交互式启动器 (fzf 模糊搜索与模块下钻)
+  tai <query>                 搜索并启动匹配项 (如 `tai cyber`, `tai service`)
+  tai cyber [app]             直接下钻并搜索/启动 Cyber 注入应用
+  tai service [action]        直接下钻并查询/控制系统服务
+  tai action <payload>        直接触发动作端点 (如 `tai action cyber:open:com.google.antigravity`)
+
+{BOLD}选项:{RESET}
+  -l, --list                  仅列出匹配条目，不进入交互式选择
+  -j, --json                  输出原始 JSON 数据
+  -h, --help                  显示帮助信息
+
+{BOLD}环境变量:{RESET}
+  TAICHI_PORT                 指定 TaiChi 网关端口 (默认: 9216)
+""")
+
+
+def main():
+    args = sys.argv[1:]
+
+    if "-h" in args or "--help" in args:
+        show_help()
+        return
+
+    if "-j" in args or "--json" in args:
+        clean_args = [a for a in args if a not in ("-j", "--json")]
+        q = " ".join(clean_args)
+        items = fetch_filter(q)
+        print(json.dumps(items, ensure_ascii=False, indent=2))
+        return
+
+    if "-l" in args or "--list" in args:
+        clean_args = [a for a in args if a not in ("-l", "--list")]
+        q = " ".join(clean_args)
+        items = fetch_filter(q)
+        print_list(items)
+        return
+
+    # Check for direct action invocation: `tai action <payload>`
+    if len(args) >= 2 and args[0] in ("action", "act"):
+        payload = " ".join(args[1:])
+        print(f"Executing action: {payload} ...")
+        success = trigger_action(payload)
+        if success:
+            print(f"{GREEN}✅ 执行成功{RESET}")
+        else:
+            print(f"{RED}❌ 执行失败{RESET}")
+        return
+
+    query = " ".join(args).strip()
+    interactive_select(query)
+
+
+if __name__ == "__main__":
+    main()

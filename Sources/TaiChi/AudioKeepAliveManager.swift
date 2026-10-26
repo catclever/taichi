@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import CoreAudio
+import Combine
 
 private func getSilenceRenderBlock() -> AVAudioSourceNodeRenderBlock {
     return { _, _, frameCount, audioBufferList -> OSStatus in
@@ -25,12 +26,20 @@ class AudioKeepAliveManager: ObservableObject {
     @Published var isBluetoothConnected = false
     
     private var isEnabled = false
+    private var cancellables = Set<AnyCancellable>()
     
     private init() {
         sourceNode = AVAudioSourceNode(renderBlock: getSilenceRenderBlock())
         engine.attach(sourceNode)
         setupDeviceListener()
         checkCurrentDevice()
+        
+        MediaObserver.shared.$state
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePlaybackState()
+            }
+            .store(in: &cancellables)
     }
     
     func setEnabled(_ enabled: Bool) {
@@ -39,7 +48,7 @@ class AudioKeepAliveManager: ObservableObject {
     }
     
     private func updatePlaybackState() {
-        if isEnabled && isBluetoothConnected {
+        if isEnabled && isBluetoothConnected && MediaObserver.shared.state.isPlaying {
             startEngine()
         } else {
             stopEngine()

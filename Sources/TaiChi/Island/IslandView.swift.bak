@@ -90,7 +90,23 @@ struct IslandView: View {
                 .offset(y: -50),
             alignment: .top
         )
+        .overlay(
+            Color.clear
+                .frame(width: baseNotchWidth, height: baseNotchHeight)
+                .contentShape(Rectangle())
+                .onRightClick {
+                    if stateModel.state != .modeSwitcher && stateModel.isLocationInPhysicalNotch(NSEvent.mouseLocation) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            stateModel.state = .modeSwitcher
+                        }
+                    }
+                },
+            alignment: .top
+        )
         .contentShape(Rectangle())
+        .onHover { isHovered in
+            stateModel.isHovering = isHovered
+        }
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleWidth)
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleHeight)
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.state)
@@ -137,12 +153,12 @@ struct IslandView: View {
         }
         .onChange(of: stateModel.isCenterNotchHovered) { isCenterHovered in
             if isCenterHovered {
-                if stateModel.state == .multiAppList || stateModel.state == .modeSwitcher { return }
+                if stateModel.state == .multiAppList || stateModel.state == .modeSwitcher || stateModel.state == .expanded { return }
                 
                 panelExpandTimer?.invalidate()
                 panelExpandTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
                     Task { @MainActor in
-                        if self.stateModel.isCenterNotchHovered && self.stateModel.state != .multiAppList && self.stateModel.state != .modeSwitcher {
+                        if self.stateModel.isCenterNotchHovered && self.stateModel.state != .multiAppList && self.stateModel.state != .modeSwitcher && self.stateModel.state != .expanded {
                             self.stateModel.currentMode = .media
                             withAnimation {
                                 self.stateModel.state = .expanded
@@ -226,7 +242,7 @@ struct IslandView: View {
                     stateModel.capsuleHeight = 160
                 }
             case .modeSwitcher:
-                stateModel.capsuleWidth = 260
+                stateModel.capsuleWidth = TaiChiSettings.shared.enableMutagen ? 350 : 260
                 stateModel.capsuleHeight = hasPhysicalNotch ? 120 : 100
             case .notification:
                 stateModel.capsuleWidth = 300
@@ -667,5 +683,11 @@ extension NSImage {
             color = NSColor(hue: h, saturation: s / scale, brightness: minBrightness, alpha: a)
         }
         return color
+    }
+}
+
+extension View {
+    func onRightClick(_ action: @escaping () -> Void) -> some View {
+        self.background(RightClickCatcherView(onRightClick: action))
     }
 }

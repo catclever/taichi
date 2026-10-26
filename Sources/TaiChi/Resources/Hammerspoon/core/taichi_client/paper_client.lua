@@ -37,12 +37,25 @@ local function getTargetScreenDetails(screen)
     return nil, nil
 end
 
+-- =============================================================================
+-- [BUG FIX DOCUMENTATION - Task fix_wallpaper_target_screen_mapping_003]
+-- 1. Problem Fixed:
+--    When calling paper.change(), getTargetScreenDetails() extracts both screenUUID
+--    and screenName, but payload previously only included screenUUID and discarded
+--    screenName. When screenUUID was synthetic/unmatched or changed dynamically,
+--    the backend had no fallback to identify the screen by name.
+-- 2. Resolution:
+--    Include both `screenUUID` and `screenName` in the JSON request payload.
+-- 3. Caveats:
+--    Ensure backend endpoints parse both fields and prioritize screen matching
+--    using either identifier.
+-- =============================================================================
 local function callTaiChiWallpaperAPI(endpoint, screen)
     local screenUUID, screenName = getTargetScreenDetails(screen)
-    local payload = {}
-    if screenUUID then
-        payload.screenUUID = screenUUID
-    end
+    local payload = {
+        screenUUID = screenUUID,
+        screenName = screenName
+    }
     
     local body = hs.json.encode(payload)
     local port = taichi_env and taichi_env.taichi_port or 9216

@@ -1,6 +1,32 @@
 import Foundation
 import Combine
 
+public struct MutagenChange: Codable, Equatable, Sendable {
+    public let path: String?
+    
+    public init(path: String? = nil) {
+        self.path = path
+    }
+}
+
+public struct MutagenConflict: Codable, Equatable, Sendable, Identifiable {
+    public let root: String?
+    public let alphaChanges: [MutagenChange]?
+    public let betaChanges: [MutagenChange]?
+    
+    public var id: String { root ?? UUID().uuidString }
+    
+    public init(
+        root: String? = nil,
+        alphaChanges: [MutagenChange]? = nil,
+        betaChanges: [MutagenChange]? = nil
+    ) {
+        self.root = root
+        self.alphaChanges = alphaChanges
+        self.betaChanges = betaChanges
+    }
+}
+
 public struct MutagenIgnore: Codable, Equatable, Sendable {
     public let paths: [String]?
     
@@ -73,9 +99,12 @@ public struct MutagenSession: Codable, Identifiable, Equatable, Sendable {
     public let paused: Bool?
     public let mode: String?
     public let ignore: MutagenIgnore?
+    public let conflicts: [MutagenConflict]?
     
     public var id: String { identifier }
     public var projectId: String? { labels?["io.mutagen.project"] }
+    public var hasConflicts: Bool { !(conflicts?.isEmpty ?? true) }
+    public var conflictCount: Int { conflicts?.count ?? 0 }
     
     public init(
         identifier: String,
@@ -86,7 +115,8 @@ public struct MutagenSession: Codable, Identifiable, Equatable, Sendable {
         status: String? = nil,
         paused: Bool? = nil,
         mode: String? = nil,
-        ignore: MutagenIgnore? = nil
+        ignore: MutagenIgnore? = nil,
+        conflicts: [MutagenConflict]? = nil
     ) {
         self.identifier = identifier
         self.name = name
@@ -97,6 +127,7 @@ public struct MutagenSession: Codable, Identifiable, Equatable, Sendable {
         self.paused = paused
         self.mode = mode
         self.ignore = ignore
+        self.conflicts = conflicts
     }
     
     public func generateCreateCommand(newIgnores: [String]) -> String {
@@ -147,15 +178,23 @@ public class MutagenManager: ObservableObject {
     public static let shared = MutagenManager()
     
     @Published public var sessions: [MutagenSession] = []
+    @Published public var archivedSessions: [MutagenSession] = []
     @Published public var projectMappings: [String: String] = [:]
+    @Published public var pendingSelectionId: String? = nil
     
     public var mappingsFileURL: URL {
         URL(fileURLWithPath: (TaiChiSettings.shared.scriptsPath as NSString).expandingTildeInPath)
             .appendingPathComponent("mutagen_projects.json")
     }
     
+    public var archivedSessionsFileURL: URL {
+        URL(fileURLWithPath: (TaiChiSettings.shared.scriptsPath as NSString).expandingTildeInPath)
+            .appendingPathComponent("mutagen_archived_sessions.json")
+    }
+    
     private init() {
         loadMappings()
+        loadArchivedSessions()
     }
     
     // MARK: - Mappings Persistence
@@ -577,5 +616,127 @@ public class MutagenManager: ObservableObject {
         }
         
         fetchSessions()
+    }
+    
+    // MARK: - Batch Control
+    
+    public func pauseAll() {
+        Task.detached {
+            let task = Process()
+            task.launchPath = "/bin/sh"
+            task.arguments = ["-c", "export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH; mutagen sync pause --all"]
+            try? task.run()
+            task.waitUntilExit()
+            await self.fetchSessions()
+        }
+    }
+    
+    public func resumeAll() {
+        Task.detached {
+            let task = Process()
+            task.launchPath = "/bin/sh"
+            task.arguments = ["-c", "export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH; mutagen sync resume --all"]
+            try? task.run()
+            task.waitUntilExit()
+            await self.fetchSessions()
+        }
+    }
+    
+    // MARK: - Archived Sessions
+    
+    public func loadArchivedSessions() {
+        let url = archivedSessionsFileURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            self.archivedSessions = []
+            return
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            let decoded = try JSONDecoder().decode([MutagenSession].self, from: data)
+            self.archivedSessions = decoded
+        } catch {
+            print("MutagenManager loadArchivedSessions error: \(error)")
+            self.archivedSessions = []
+        }
+    }
+    
+    public func saveArchivedSessions() {
+        let url = archivedSessionsFileURL
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(archivedSessions)
+            let dir = url.deletingLastPathComponent()
+            if !FileManager.default.fileExists(atPath: dir.path) {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            }
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("MutagenManager saveArchivedSessions error: \(error)")
+        }
+    }
+    
+    public func togglePause(session: MutagenSession) {
+        let isPaused = session.paused ?? false
+        let action = isPaused ? "resume" : "pause"
+        Task.detached {
+            let task = Process()
+            task.launchPath = "/bin/sh"
+            task.arguments = ["-c", "export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH; mutagen sync \(action) \(session.id)"]
+            try? task.run()
+            task.waitUntilExit()
+            await self.fetchSessions()
+        }
+    }
+    
+    public func terminateAndArchive(session: MutagenSession) {
+        if !archivedSessions.contains(where: { $0.id == session.id }) {
+            archivedSessions.append(session)
+            saveArchivedSessions()
+        }
+        
+        Task.detached {
+            let task = Process()
+            task.launchPath = "/bin/sh"
+            task.arguments = ["-c", "export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH; mutagen sync terminate \(session.id)"]
+            try? task.run()
+            task.waitUntilExit()
+            await self.fetchSessions()
+        }
+    }
+    
+    public func resumeArchivedSession(id: String) {
+        guard let index = archivedSessions.firstIndex(where: { $0.id == id }) else { return }
+        let session = archivedSessions[index]
+        
+        Task.detached {
+            let sessionType = await self.sessionType(for: session)
+            var cmd = ""
+            
+            if case .linkedProject(_, let configPath) = sessionType {
+                cmd = "mutagen project start -f \"\(configPath)\""
+            } else {
+                cmd = session.generateCreateCommand(newIgnores: session.ignore?.paths ?? [])
+            }
+            
+            let task = Process()
+            task.launchPath = "/bin/sh"
+            task.arguments = ["-c", "export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH; \(cmd)"]
+            try? task.run()
+            task.waitUntilExit()
+            
+            await MainActor.run {
+                if task.terminationStatus == 0 {
+                    self.archivedSessions.removeAll { $0.id == id }
+                    self.saveArchivedSessions()
+                }
+            }
+            await self.fetchSessions()
+        }
+    }
+    
+    public func deleteArchivedSession(id: String) {
+        archivedSessions.removeAll { $0.id == id }
+        saveArchivedSessions()
     }
 }

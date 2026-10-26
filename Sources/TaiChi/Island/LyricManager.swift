@@ -38,6 +38,14 @@ class LyricManager: ObservableObject, @unchecked Sendable {
     private var lastPushTime: Date = Date.distantPast
     private var hasPushedForCurrentSong: Bool = false
     
+    func clearLyrics() {
+        DispatchQueue.main.async {
+            self.currentLyrics = []
+            self.currentSongQuery = ""
+            self.hasPushedForCurrentSong = false
+        }
+    }
+    
     func pushLyrics(title: String, artist: String, lrc: String) {
         let query = "\(title) \(artist)"
         

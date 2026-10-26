@@ -11,7 +11,7 @@ struct ExpandedPanelView: View {
     @State private var isDraggingProgress = false
     @State private var dragProgress: Double = 0.0
     
-    @State private var timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+    @State private var timer: AnyCancellable?
     @State private var localElapsedTime: Double = 0.0
     
     var body: some View {
@@ -57,18 +57,21 @@ struct ExpandedPanelView: View {
                                             .font(.title2)
                                             .foregroundColor(.white)
                                     }.buttonStyle(PlainButtonStyle())
+                                        .focusable(false)
                                     
                                     Button(action: { mediaObserver.sendTargetedCommand(2) }) { // Play/Pause
                                         Image(systemName: mediaObserver.state.isPlaying ? "pause.fill" : "play.fill")
                                             .font(.title)
                                             .foregroundColor(.white)
                                     }.buttonStyle(PlainButtonStyle())
+                                        .focusable(false)
                                     
                                     Button(action: { mediaObserver.sendTargetedCommand(4) }) { // Next
                                         Image(systemName: "forward.fill")
                                             .font(.title2)
                                             .foregroundColor(.white)
                                     }.buttonStyle(PlainButtonStyle())
+                                        .focusable(false)
                                     
                                     if let isLiked = mediaObserver.state.isLiked {
                                         Button(action: { mediaObserver.sendTargetedCommand(6) }) { // Toggle Like
@@ -76,6 +79,7 @@ struct ExpandedPanelView: View {
                                                 .font(.title2)
                                                 .foregroundColor(isLiked ? .red : .white)
                                         }.buttonStyle(PlainButtonStyle())
+                                        .focusable(false)
                                     }
                                     
                                     Spacer()
@@ -172,6 +176,7 @@ struct ExpandedPanelView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
+                                        .focusable(false)
                 
                 // Lyric Pin Button
                 Button(action: {
@@ -186,6 +191,7 @@ struct ExpandedPanelView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
+                                        .focusable(false)
 
                 // Pin Button
                 Button(action: {
@@ -201,25 +207,13 @@ struct ExpandedPanelView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
+                                        .focusable(false)
             }
             .padding(.trailing, 12)
             .padding(.top, 12)
         }
         .frame(width: stateModel.capsuleWidth, height: stateModel.capsuleHeight)
-        .onReceive(timer) { _ in
-            guard !isDraggingProgress else { return }
-            guard mediaObserver.state.isPlaying else { return }
-            
-            // Sync with the actual computed time every tick
-            let actualTime = mediaObserver.state.currentElapsedTime
-            
-            // If the song just ended, avoid continuing past duration
-            if actualTime > mediaObserver.state.duration && mediaObserver.state.duration > 0 {
-                localElapsedTime = mediaObserver.state.duration
-            } else {
-                localElapsedTime = actualTime
-            }
-        }
+
         .onChange(of: mediaObserver.state.title) { _ in
             lyricManager.fetchLyrics(title: mediaObserver.state.title, artist: mediaObserver.state.artist)
             localElapsedTime = mediaObserver.state.currentElapsedTime
@@ -229,6 +223,33 @@ struct ExpandedPanelView: View {
             if !mediaObserver.state.title.isEmpty {
                 lyricManager.fetchLyrics(title: mediaObserver.state.title, artist: mediaObserver.state.artist)
             }
+            startTimer()
+        }
+        .onDisappear {
+            timer?.cancel()
+            timer = nil
+        }
+        .onChange(of: mediaObserver.state.isPlaying) { _ in
+            startTimer()
+        }
+    }
+    
+    private func startTimer() {
+        timer?.cancel()
+        if mediaObserver.state.isPlaying {
+            timer = Timer.publish(every: 0.1, on: .main, in: .common)
+                .autoconnect()
+                .sink { _ in
+                    guard !isDraggingProgress else { return }
+                    let actualTime = mediaObserver.state.currentElapsedTime
+                    if actualTime > mediaObserver.state.duration && mediaObserver.state.duration > 0 {
+                        localElapsedTime = mediaObserver.state.duration
+                    } else {
+                        localElapsedTime = actualTime
+                    }
+                }
+        } else {
+            timer = nil
         }
     }
     

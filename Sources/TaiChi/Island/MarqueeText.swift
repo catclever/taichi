@@ -63,6 +63,8 @@ struct MarqueeTextInner: View {
             }
     }
     
+    @State private var animationTask: Task<Void, Never>? = nil
+    
     private func updateAnimation() {
         if textWidth > containerWidth + 0.5 && containerWidth > 0 {
             if !isAnimating {
@@ -70,21 +72,33 @@ struct MarqueeTextInner: View {
                 let distance = textWidth - containerWidth + 20 // padding
                 let duration = distance / velocity
                 
-                withAnimation(nil) {
-                    offset = 0
-                }
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    if isAnimating {
-                        // Move to the end and stay there
-                        withAnimation(.linear(duration: duration).delay(1.5)) {
-                            offset = -distance
+                animationTask?.cancel()
+                animationTask = Task {
+                    while !Task.isCancelled {
+                        await MainActor.run {
+                            withAnimation(nil) {
+                                offset = 0
+                            }
                         }
+                        
+                        // 开始前等待 1.5 秒
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        if Task.isCancelled { break }
+                        
+                        await MainActor.run {
+                            withAnimation(.linear(duration: duration)) {
+                                offset = -distance
+                            }
+                        }
+                        
+                        // 等待滚动完成，加上 3 秒的结尾停留时间
+                        try? await Task.sleep(nanoseconds: UInt64((duration + 3.0) * 1_000_000_000))
                     }
                 }
             }
         } else {
             isAnimating = false
+            animationTask?.cancel()
             withAnimation(nil) {
                 offset = 0
             }

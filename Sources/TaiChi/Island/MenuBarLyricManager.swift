@@ -1,7 +1,26 @@
 import Cocoa
 import SwiftUI
-
 import Combine
+
+// =========================================================================================
+// [BUG FIX: Menu Bar Lyric Floating Overlay Window & Power Optimization]
+// 1. Problem:
+//    Previously, dynamic scrolling text and subviews were embedded directly inside NSStatusItem.button.
+//    Updating subview frames at 10Hz forced AppKit to trigger `-[NSStatusItem _updateReplicants]`
+//    (CPU software snapshotting via `CALayer.renderInContext:`) and continuous XPC fence syncs
+//    to ControlCenter and WindowServer on every frame, resulting in unacceptable battery drain and CPU load.
+// 2. Resolution:
+//    - Replaced in-button subviews with a lightweight, GPU-accelerated borderless Floating Overlay Window (`NSPanel`).
+//    - The overlay window is configured with `.statusBar` level, clear background, non-activating panel,
+//      and `ignoresMouseEvents = true` so user clicks pass directly through to `NSStatusItem.button`.
+//    - When paused, the overlay window is hidden via `orderOut(nil)`, timers are stopped, and the status item
+//      shows a static "♪" symbol with variable width.
+//    - When playing, the status item length is fixed to 150pt (acting as a transparent click receptor),
+//      and the overlay window tracks the button's screen coordinates, rendering lyrics via GPU/Metal.
+// 3. Caveats:
+//    - The overlay window must track screen frame changes when displays reconfigure or status items move.
+//    - `ignoresMouseEvents = true` must be maintained so clicking the lyric still triggers the player popover.
+// =========================================================================================
 
 class PassThroughView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -20,13 +39,18 @@ class MenuBarLyricManager: NSObject {
     static let shared = MenuBarLyricManager()
     
     private var statusItem: NSStatusItem?
+    private var overlayWindow: NSPanel?
     private var cancellables = Set<AnyCancellable>()
     private var lyricTimer: Timer?
     
     private var currentFullLyric: String = ""
     
-    private var clipView: NSView?
-    private var lyricLabel: NSTextField?
+    private var isScrolling: Bool = false
+    private var scrollOffset: CGFloat = 0.0
+    private var textWidth: CGFloat = 0.0
+    
+    private var clipView: PassThroughView?
+    private var lyricLabel: PassThroughTextField?
     
     private var popover: NSPopover?
     private var popoverEventMonitor: Any?
@@ -34,6 +58,12 @@ class MenuBarLyricManager: NSObject {
     private override init() {
         super.init()
         setupObservers()
+        NotificationCenter.default.addObserver(self, selector: #selector(handleScreenParametersChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(handleScreenParametersChanged), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    }
+    
+    @objc private func handleScreenParametersChanged() {
+        updateOverlayPosition()
     }
     
     private func setupObservers() {
@@ -88,6 +118,70 @@ class MenuBarLyricManager: NSObject {
         lyricTimer = nil
     }
     
+    private func setupOverlayWindow() {
+        if overlayWindow != nil { return }
+        
+        let panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .statusBar
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        panel.isReleasedWhenClosed = false
+        
+        let cv = PassThroughView(frame: .zero)
+        cv.wantsLayer = true
+        cv.layer?.masksToBounds = true
+        cv.layer?.backgroundColor = NSColor.clear.cgColor
+        cv.autoresizingMask = [.width, .height]
+        
+        let label = PassThroughTextField(labelWithString: "")
+        label.font = NSFont.systemFont(ofSize: 13, weight: .regular)
+        label.textColor = .labelColor
+        label.drawsBackground = false
+        label.isBordered = false
+        label.isEditable = false
+        label.isSelectable = false
+        
+        cv.addSubview(label)
+        panel.contentView = cv
+        
+        self.clipView = cv
+        self.lyricLabel = label
+        self.overlayWindow = panel
+    }
+    
+    private func updateOverlayPosition() {
+        guard let button = statusItem?.button, let win = button.window else { return }
+        
+        // Mirror the exact appearance and dynamically compute high-contrast text color without any background plate
+        if let overlay = overlayWindow {
+            if overlay.appearance != button.effectiveAppearance {
+                overlay.appearance = button.effectiveAppearance
+            }
+            let isDark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let targetColor = isDark ? NSColor.white.withAlphaComponent(0.95) : NSColor.black.withAlphaComponent(0.90)
+            if lyricLabel?.textColor != targetColor {
+                lyricLabel?.textColor = targetColor
+            }
+        }
+        
+        let buttonFrameInWin = button.convert(button.bounds, to: nil)
+        let screenFrame = win.convertToScreen(buttonFrameInWin)
+        if let overlay = overlayWindow {
+            if overlay.frame != screenFrame {
+                overlay.setFrame(screenFrame, display: true)
+            }
+            clipView?.frame = overlay.contentView?.bounds ?? .zero
+        }
+    }
+    
     private func createStatusItem() {
         if statusItem == nil {
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -95,32 +189,20 @@ class MenuBarLyricManager: NSObject {
             if let button = statusItem?.button {
                 button.action = #selector(handleStatusItemClick)
                 button.target = self
-                button.title = ""
-                
-                let cv = PassThroughView(frame: button.bounds)
-                cv.wantsLayer = true
-                cv.layer?.masksToBounds = true
-                cv.autoresizingMask = [.width, .height]
-                
-                let label = PassThroughTextField(labelWithString: "")
-                label.font = NSFont.systemFont(ofSize: 13, weight: .regular)
-                label.textColor = .labelColor
-                label.drawsBackground = false
-                label.isBordered = false
-                label.isEditable = false
-                label.isSelectable = false
-                
-                cv.addSubview(label)
-                button.addSubview(cv)
-                
-                self.clipView = cv
-                self.lyricLabel = label
+                button.title = "♪"
+                button.subviews.forEach { $0.removeFromSuperview() }
             }
+            setupOverlayWindow()
         }
         updateLyric() // initial
     }
     
     private func removeStatusItem() {
+        stopTimer()
+        overlayWindow?.orderOut(nil)
+        overlayWindow = nil
+        clipView = nil
+        lyricLabel = nil
         if let item = statusItem {
             NSStatusBar.system.removeStatusItem(item)
             statusItem = nil
@@ -128,15 +210,32 @@ class MenuBarLyricManager: NSObject {
     }
     
     private func updateLyric() {
-        guard let _ = statusItem else { return }
+        guard let item = statusItem, let button = item.button else { return }
         
         let mediaState = MediaObserver.shared.state
-        if !mediaState.isPlaying && mediaState.title.isEmpty {
+        if !mediaState.isPlaying {
+            overlayWindow?.orderOut(nil)
+            stopTimer()
             if currentFullLyric != "TaiChi" {
                 currentFullLyric = "TaiChi"
-                setDisplayText("")
+                button.title = "♪"
+                item.length = NSStatusItem.variableLength
             }
             return
+        }
+        
+        let fixedWidth: CGFloat = 150
+        if item.length != fixedWidth {
+            item.length = fixedWidth
+        }
+        if button.title != "" {
+            button.title = ""
+        }
+        
+        setupOverlayWindow()
+        updateOverlayPosition()
+        if overlayWindow?.isVisible != true {
+            overlayWindow?.orderFront(nil)
         }
         
         let lyrics = LyricManager.shared.currentLyrics
@@ -155,54 +254,50 @@ class MenuBarLyricManager: NSObject {
         if newLyric != currentFullLyric {
             currentFullLyric = newLyric
             setDisplayText(newLyric)
+        } else if isScrolling {
+            scrollOffset += 1.5
+            let distance = textWidth - fixedWidth + 15
+            if scrollOffset > distance {
+                scrollOffset = -15 // Wait at the beginning before repeating
+            }
+            if scrollOffset > 0 {
+                lyricLabel?.frame.origin.x = 5 - scrollOffset
+            }
         }
     }
     
     private func setDisplayText(_ text: String) {
         guard let cv = clipView, let lbl = lyricLabel else { return }
         
-        // Cancel active animations
+        // Cancel active animations just in case
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = 0
         lbl.animator().frame.origin.x = lbl.frame.origin.x
         NSAnimationContext.endGrouping()
         lbl.layer?.removeAllAnimations()
         
+        let fixedWidth: CGFloat = 150
         let displayStr = text.isEmpty ? " ♪ " : " \(text) "
         lbl.stringValue = displayStr
         lbl.sizeToFit()
         
-        // Center vertically
+        // Center vertically in overlay container
         lbl.frame.origin.y = (cv.bounds.height - lbl.frame.height) / 2
         
         if text.isEmpty || text == "TaiChi" {
-            let textWidth = lbl.frame.width
-            statusItem?.length = textWidth + 10
-            cv.frame.size.width = textWidth + 10
-            lbl.frame.origin.x = 5
+            lbl.frame.origin.x = (cv.bounds.width - lbl.frame.width) / 2
+            self.isScrolling = false
         } else {
-            let fixedWidth: CGFloat = 150
-            statusItem?.length = fixedWidth
-            cv.frame.size.width = fixedWidth
+            self.textWidth = lbl.frame.width
+            lbl.lineBreakMode = .byClipping
+            lbl.frame.size.width = max(textWidth, fixedWidth)
             
-            let textWidth = lbl.frame.width
             if textWidth > fixedWidth {
-                lbl.frame.origin.x = 5 // start slightly inset
-                let distance = textWidth - fixedWidth + 15 // distance to scroll
-                let duration = Double(distance) / 18.0 // 18 points per second (slightly faster) (very smooth, slow read speed)
-                
-                // Delay the animation slightly so it stays at the beginning for a moment
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    // Check if lyric changed while waiting
-                    guard self.currentFullLyric == text else { return }
-                    NSAnimationContext.runAnimationGroup({ context in
-                        context.duration = duration
-                        context.timingFunction = CAMediaTimingFunction(name: .linear)
-                        context.allowsImplicitAnimation = true
-                        lbl.animator().frame.origin.x = -distance + 5
-                    }, completionHandler: nil)
-                }
+                self.isScrolling = true
+                self.scrollOffset = -15 // Start with a small delay
+                lbl.frame.origin.x = 5
             } else {
+                self.isScrolling = false
                 lbl.frame.origin.x = (fixedWidth - textWidth) / 2
             }
         }
@@ -210,6 +305,24 @@ class MenuBarLyricManager: NSObject {
     
     @objc private func handleStatusItemClick() {
         guard let button = statusItem?.button else { return }
+        
+        let clickCount = NSApp.currentEvent?.clickCount ?? 1
+        if clickCount == 2 {
+            popover?.performClose(nil)
+            let bundleId = MediaObserver.shared.state.bundleIdentifier
+            if !bundleId.isEmpty {
+                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                    let configuration = NSWorkspace.OpenConfiguration()
+                    configuration.activates = true
+                    NSWorkspace.shared.openApplication(at: url, configuration: configuration, completionHandler: nil)
+                }
+            }
+            return
+        }
+        
+        if !MediaObserver.shared.isPlaybackControlSupported() {
+            return
+        }
         
         if popover == nil {
             let p = NSPopover()
@@ -245,18 +358,21 @@ struct MenuBarPlayerView: View {
                     .font(.title2)
             }
             .buttonStyle(.plain)
+            .focusable(false)
             
             Button(action: { observer.sendTargetedCommand(2) }) { // Play/Pause
                 Image(systemName: observer.state.isPlaying ? "pause.fill" : "play.fill")
                     .font(.title)
             }
             .buttonStyle(.plain)
+            .focusable(false)
             
             Button(action: { observer.sendTargetedCommand(4) }) { // Next
                 Image(systemName: "forward.fill")
                     .font(.title2)
             }
             .buttonStyle(.plain)
+            .focusable(false)
             
             if let isLiked = observer.state.isLiked {
                 Button(action: { observer.sendTargetedCommand(6) }) { // Toggle Like
@@ -265,6 +381,7 @@ struct MenuBarPlayerView: View {
                         .foregroundColor(isLiked ? .red : .primary)
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
             }
         }
         .padding()

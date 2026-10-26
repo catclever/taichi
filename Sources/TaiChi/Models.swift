@@ -119,7 +119,7 @@ class TaiChiSettings: ObservableObject {
             UserDefaults.standard.set(showMenuBarLyrics, forKey: "showMenuBarLyrics")
         }
     }
-@Published var activeSMBMounts: [SMBMountConfig] = [] {
+    @Published var activeSMBMounts: [SMBMountConfig] = [] {
         didSet { saveActiveSMBMounts() }
     }
     
@@ -149,6 +149,19 @@ class TaiChiSettings: ObservableObject {
     
     @Published var scriptsPath: String = ("~/Library/Services/taichi" as NSString).expandingTildeInPath {
         didSet { saveScriptsPath() }
+    }
+    
+    // MARK: - System Service & Descartes Hub Settings
+    @Published var descartesHubURL: String = "ws://127.0.0.1:8080" {
+        didSet { saveDescartesHubURL() }
+    }
+    
+    @Published var servicesDirectoryPath: String = ("~/Library/Services" as NSString).expandingTildeInPath {
+        didSet { saveServicesDirectoryPath() }
+    }
+    
+    @Published var customServicePorts: [String: Int] = [:] {
+        didSet { saveCustomServicePorts() }
     }
     
     // Hammerspoon 配置
@@ -212,6 +225,16 @@ class TaiChiSettings: ObservableObject {
     
     // Wallpaper Engine 配置
 
+    @Published var useEagleForWallpapers: Bool = false {
+        didSet { saveWallpaperSettings() }
+    }
+    @Published var eagleSkipLocalSave: Bool = true {
+        didSet { saveWallpaperSettings() }
+    }
+    @Published var eaglePendingTasks: [WallpaperHistoryEntry] = [] {
+        didSet { saveWallpaperSettings() }
+    }
+    
     @Published var wallpaperSaveDir: String = ("~/Pictures/wallpapers" as NSString).expandingTildeInPath {
         didSet { saveWallpaperSettings() }
     }
@@ -344,6 +367,19 @@ class TaiChiSettings: ObservableObject {
             scriptsPath = path
         }
         
+        if let hubURL = UserDefaults.standard.string(forKey: "descartesHubURL") {
+            descartesHubURL = hubURL
+        }
+        
+        if let servPath = UserDefaults.standard.string(forKey: "servicesDirectoryPath") {
+            servicesDirectoryPath = servPath
+        }
+        
+        if let data = UserDefaults.standard.data(forKey: "customServicePorts"),
+           let ports = try? JSONDecoder().decode([String: Int].self, from: data) {
+            customServicePorts = ports
+        }
+        
         if let hsPath = UserDefaults.standard.string(forKey: "hsConfigPath") {
             hsConfigPath = hsPath
         }
@@ -359,9 +395,18 @@ class TaiChiSettings: ObservableObject {
         
         
 
+        useEagleForWallpapers = UserDefaults.standard.bool(forKey: "useEagleForWallpapers")
+        if UserDefaults.standard.object(forKey: "eagleSkipLocalSave") != nil {
+            eagleSkipLocalSave = UserDefaults.standard.bool(forKey: "eagleSkipLocalSave")
+        } else {
+            eagleSkipLocalSave = true
+        }
         if let dir = UserDefaults.standard.string(forKey: "wallpaperSaveDir") { wallpaperSaveDir = dir }
         if let data = UserDefaults.standard.data(forKey: "wallpaperChannels"), let ch = try? JSONDecoder().decode([String: [String]].self, from: data) { wallpaperChannels = ch }
         if let data = UserDefaults.standard.data(forKey: "wallpaperHistory"), let hs = try? JSONDecoder().decode([String: [WallpaperHistoryEntry]].self, from: data) { wallpaperHistory = hs }
+        if let data = UserDefaults.standard.data(forKey: "eaglePendingTasks"), let tasks = try? JSONDecoder().decode([WallpaperHistoryEntry].self, from: data) { eaglePendingTasks = tasks }
+        
+        loadActiveSMBMounts()
         
         syncFromHSConfig()
     }
@@ -477,6 +522,23 @@ class TaiChiSettings: ObservableObject {
         UserDefaults.standard.set(scriptsPath, forKey: "scriptsPath")
     }
     
+    private func saveDescartesHubURL() {
+        guard !isInitializing else { return }
+        UserDefaults.standard.set(descartesHubURL, forKey: "descartesHubURL")
+    }
+    
+    private func saveServicesDirectoryPath() {
+        guard !isInitializing else { return }
+        UserDefaults.standard.set(servicesDirectoryPath, forKey: "servicesDirectoryPath")
+    }
+    
+    private func saveCustomServicePorts() {
+        guard !isInitializing else { return }
+        if let data = try? JSONEncoder().encode(customServicePorts) {
+            UserDefaults.standard.set(data, forKey: "customServicePorts")
+        }
+    }
+    
     private func saveHSConfigPath() {
         guard !isInitializing else { return }
         UserDefaults.standard.set(hsConfigPath, forKey: "hsConfigPath")
@@ -509,8 +571,11 @@ class TaiChiSettings: ObservableObject {
     
     private func saveWallpaperSettings() {
         guard !isInitializing else { return }
+        UserDefaults.standard.set(useEagleForWallpapers, forKey: "useEagleForWallpapers")
+        UserDefaults.standard.set(eagleSkipLocalSave, forKey: "eagleSkipLocalSave")
         UserDefaults.standard.set(wallpaperSaveDir, forKey: "wallpaperSaveDir")
         if let d = try? JSONEncoder().encode(wallpaperChannels) { UserDefaults.standard.set(d, forKey: "wallpaperChannels") }
         if let d = try? JSONEncoder().encode(wallpaperHistory) { UserDefaults.standard.set(d, forKey: "wallpaperHistory") }
+        if let d = try? JSONEncoder().encode(eaglePendingTasks) { UserDefaults.standard.set(d, forKey: "eaglePendingTasks") }
     }
 }

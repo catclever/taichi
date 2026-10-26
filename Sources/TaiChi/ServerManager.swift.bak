@@ -149,7 +149,7 @@ class ServerManager: @unchecked Sendable {
         
         let process = Foundation.Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-l", "-c", "node \"\(workerScriptPath)\" \"\(scriptsDir)\""]
+        process.arguments = ["-l", "-c", "exec node \"\(workerScriptPath)\" \"\(scriptsDir)\""]
         
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -310,6 +310,25 @@ class ServerManager: @unchecked Sendable {
                     
                     if let workerPort = self.workerPort, let targetPort = app.port {
                         print("🔄 Re-invoking worker for \(app.id) on port \(targetPort)...")
+                        
+                        let hotkey = settings.hotkeyTelescope
+                        Task {
+                            let bindings: [[String: Any]] = [
+                                [
+                                    "mods": hotkey.modifiers,
+                                    "key": hotkey.key,
+                                    "type": "lua",
+                                    "luaAction": "taichi.triggerInspector"
+                                ]
+                            ]
+                            let params: [String: Any] = [
+                                "app": app.name,
+                                "profileId": "taichi_inspector",
+                                "bindings": bindings
+                            ]
+                            try? await HSManager.shared.sendAction(action: "hotkey.register", params: params)
+                        }
+                        
                         DispatchQueue.global(qos: .background).async {
                             var components = URLComponents()
                             components.scheme = "http"
@@ -409,6 +428,10 @@ class ServerManager: @unchecked Sendable {
         // 5. External Lyrics Push API
         server["/api/lyrics/push"] = { [weak self] request in
             return self?.handleLyricsPush(request) ?? .internalServerError
+        }
+        
+        server["/api/media/like_status"] = { [weak self] request in
+            return self?.handleMediaLikeStatus(request) ?? .internalServerError
         }
         
         // 5. List Config Injection API
@@ -573,6 +596,22 @@ class ServerManager: @unchecked Sendable {
         }
         
         return .internalServerError
+    }
+    
+    private func handleMediaLikeStatus(_ request: HttpRequest) -> HttpResponse {
+        guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
+        let body = Data(request.body)
+        guard let json = try? JSONSerialization.jsonObject(with: body, options: []) as? [String: Any] else {
+            return jsonResponse(["error": "Invalid JSON payload"], statusCode: 400)
+        }
+        
+        let isLiked = json["isLiked"] as? Bool
+        
+        DispatchQueue.main.async {
+            MediaObserver.shared.state.isLiked = isLiked
+        }
+        
+        return jsonResponse(["success": true, "isLiked": isLiked as Any])
     }
     
     private func handleLyricsPush(_ request: HttpRequest) -> HttpResponse {
@@ -1173,17 +1212,34 @@ class ServerManager: @unchecked Sendable {
         }
     }
 
+    // =============================================================================
+    // [BUG FIX DOCUMENTATION - Task fix_wallpaper_target_screen_mapping_003]
+    // 1. Problem Fixed:
+    //    Wallpaper endpoints (/api/wallpaper/change, /api/wallpaper/previous, /api/wallpaper/save)
+    //    only parsed `screenUUID` from the request JSON, dropping `screenName`. When an
+    //    external screen was referenced by name or had a transient UUID, WallpaperManager
+    //    could not resolve the target screen.
+    // 2. Resolution:
+    //    Parse both `screenUUID` and `screenName` from the JSON body in handleWallpaperChange,
+    //    handleWallpaperPrevious, and handleWallpaperSave, and pass both parameters to
+    //    WallpaperManager.shared methods.
+    // 3. Caveats:
+    //    WallpaperManager methods handle dual fallback and verify target screens before
+    //    triggering wallpaper updates.
+    // =============================================================================
     private func handleWallpaperChange(_ request: HttpRequest) -> HttpResponse {
         guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
         let bodyBytes = request.body
         let bodyData = Data(bodyBytes)
         var screenUUID: String? = nil
+        var screenName: String? = nil
         if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
             screenUUID = json["screenUUID"] as? String
+            screenName = json["screenName"] as? String
         }
         
         Task {
-            await WallpaperManager.shared.forceChange(screenUUID: screenUUID)
+            await WallpaperManager.shared.forceChange(screenUUID: screenUUID, screenName: screenName)
         }
         return jsonResponse(["status": "ok", "action": "change_started"])
     }
@@ -1192,12 +1248,14 @@ class ServerManager: @unchecked Sendable {
         guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
         let bodyData = Data(request.body)
         var screenUUID: String? = nil
+        var screenName: String? = nil
         if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
             screenUUID = json["screenUUID"] as? String
+            screenName = json["screenName"] as? String
         }
         
         Task {
-            await WallpaperManager.shared.revertToPrevious(screenUUID: screenUUID)
+            await WallpaperManager.shared.revertToPrevious(screenUUID: screenUUID, screenName: screenName)
         }
         return jsonResponse(["status": "ok", "action": "previous_started"])
     }
@@ -1206,12 +1264,14 @@ class ServerManager: @unchecked Sendable {
         guard request.method == "POST" else { return jsonResponse(["error": "Method Not Allowed"], statusCode: 405) }
         let bodyData = Data(request.body)
         var screenUUID: String? = nil
+        var screenName: String? = nil
         if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
             screenUUID = json["screenUUID"] as? String
+            screenName = json["screenName"] as? String
         }
         
         Task {
-            await WallpaperManager.shared.saveCurrent(screenUUID: screenUUID)
+            await WallpaperManager.shared.saveCurrent(screenUUID: screenUUID, screenName: screenName)
         }
         return jsonResponse(["status": "ok", "action": "save_started"])
     }

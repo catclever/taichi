@@ -539,6 +539,19 @@ struct WallpaperEngineSection: View {
                     }
                     
                     VStack(alignment: .leading, spacing: 4) {
+                        Toggle("基于 Eagle 管理壁纸 (自动推送到当前素材库)", isOn: $settings.useEagleForWallpapers)
+                            .help("勾选后，保存壁纸时如果 Eagle 在后台运行，则自动推送到 Eagle。若未运行则回退到下方配置的保存路径。")
+                        
+                        if settings.useEagleForWallpapers {
+                            Toggle("通过 Eagle 管理时不再保存到本地目录", isOn: $settings.eagleSkipLocalSave)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 24)
+                                .help("默认勾选。开启后，只要成功推送到 Eagle，就不再往下方配置的壁纸保存路径中存入图片，避免产生多余文件。")
+                        }
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
                         Text("壁纸保存路径:").font(.subheadline)
                         HStack {
                             Text(settings.wallpaperSaveDir).font(.caption).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
@@ -563,6 +576,11 @@ struct WallpaperEngineSection: View {
     }
 }
 
+class SettingsWindow: NSWindow {
+    override var canBecomeKey: Bool { return true }
+    override var canBecomeMain: Bool { return true }
+}
+
 @MainActor
 class SettingsWindowManager {
     static let shared = SettingsWindowManager()
@@ -576,7 +594,7 @@ class SettingsWindowManager {
         }
         
         let settingsView = SettingsView()
-        let newWindow = NSWindow(
+        let newWindow = SettingsWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,

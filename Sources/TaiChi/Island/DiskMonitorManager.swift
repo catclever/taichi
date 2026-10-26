@@ -30,6 +30,10 @@ class DiskMonitorManager: ObservableObject {
     @Published var targets: [MountTarget] = []
     @Published var isNetworkAvailable: Bool = false
     
+    private let maxRetries = 5
+    private var retryTasks: [String: Task<Void, Never>] = [:]
+    private var manuallyDisconnectedIDs: Set<String> = []
+    
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "fun.upup.taichi.diskMonitor")
     
@@ -85,6 +89,7 @@ class DiskMonitorManager: ObservableObject {
         for i in 0..<targets.count {
             if mountedPaths.contains(targets[i].localPath) {
                 targets[i].state = .connected
+                targets[i].retryCount = 0
             } else {
                 targets[i].state = .disconnected
                 if targets[i].isActive && isNetworkAvailable {
@@ -107,15 +112,36 @@ class DiskMonitorManager: ObservableObject {
             let isRclone = path.lowercased().contains("alist") || path.lowercased().contains("rclone") || targets.contains(where: { $0.localPath == path && $0.type == .rclone })
             
             if isNetwork || isRclone {
-                if !targets.contains(where: { $0.localPath == path }) {
-                    let newId = url.lastPathComponent
-                    let type: MountType = isRclone ? .rclone : .smb
-                    let newTarget = MountTarget(id: newId, remotePath: nil, localPath: path, type: type, isActive: false, state: .connected)
-                    targets.append(newTarget)
+                let newId = url.lastPathComponent
+                if !targets.contains(where: { $0.localPath == path || $0.id == newId }) {
+                    if isRclone {
+                        let newTarget = MountTarget(id: newId, remotePath: nil, localPath: path, type: .rclone, isActive: false, state: .connected)
+                        targets.append(newTarget)
+                    } else {
+                        var remotePath: String? = nil
+                        for line in mountOutput {
+                            if line.contains(" on \(path) (smbfs") || line.contains(" on \(path) (") {
+                                let remotePart = line.components(separatedBy: " on ").first?.trimmingCharacters(in: .whitespaces) ?? ""
+                                if remotePart.hasPrefix("//") {
+                                    remotePath = remotePart
+                                }
+                                break
+                            }
+                        }
+                        
+                        let newTarget = MountTarget(id: newId, remotePath: remotePath, localPath: path, type: .smb, isActive: true, state: .connected)
+                        targets.append(newTarget)
+                        
+                        if !TaiChiSettings.shared.activeSMBMounts.contains(where: { $0.id == newId || $0.localPath == path }) {
+                            let newMountConfig = SMBMountConfig(id: newId, remotePath: remotePath ?? "", localPath: path)
+                            TaiChiSettings.shared.activeSMBMounts.append(newMountConfig)
+                        }
+                    }
                 }
             }
         }
     }
+    
     private func loadRcloneConfigs() {
         let confPath = "/Users/kael/Library/Services/alist/mounts.conf"
         guard let confString = try? String(contentsOfFile: confPath, encoding: .utf8) else { return }
@@ -147,7 +173,7 @@ class DiskMonitorManager: ObservableObject {
     private func setupNetworkMonitor() {
         pathMonitor.pathUpdateHandler = { [weak self] path in
             let available = path.status == .satisfied
-            DispatchQueue.main.async {
+            Task { @MainActor [weak self] in
                 self?.isNetworkAvailable = available
                 if available {
                     self?.triggerAutoReconnect()
@@ -182,35 +208,98 @@ class DiskMonitorManager: ObservableObject {
             targets[index].isActive = isActive
         } else {
             let mountedURLs = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: []) ?? []
-        let mountedPaths = mountedURLs.map { $0.path }
+            let mountedPaths = mountedURLs.map { $0.path }
             let state: MountState = mountedPaths.contains(localPath) ? .connected : .disconnected
             let newTarget = MountTarget(id: id, remotePath: remotePath, localPath: localPath, type: type, isActive: isActive, state: state)
             targets.append(newTarget)
         }
     }
     
-    func connect(id: String) {
+    func connect(id: String, isRetry: Bool = false) {
         guard let index = targets.firstIndex(where: { $0.id == id }) else { return }
         let target = targets[index]
+        
+        if !isRetry {
+            cancelRetry(id: id)
+            manuallyDisconnectedIDs.remove(id)
+        }
         
         if target.type == .rclone {
             // For rclone, we use the external script
             runProcess(executable: "/bin/bash", arguments: ["-c", "/Users/kael/Library/Services/alist/start_mount.sh \(target.id)"])
             // UI State will be updated passively when didMountNotification triggers
         } else if target.type == .smb {
-            guard let remote = target.remotePath else { return }
-            try? FileManager.default.createDirectory(atPath: target.localPath, withIntermediateDirectories: true)
-            runProcess(executable: "/sbin/mount_smbfs", arguments: [remote, target.localPath])
+            guard let remote = target.remotePath else {
+                print("[DiskMonitor] Cannot connect \(id): remotePath is nil")
+                return
+            }
+            let formattedURL = formatSMBURL(remote)
+            
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                print("[DiskMonitor] Mounting SMB volume: \(formattedURL) (isRetry: \(isRetry))")
+                let (success, errorMsg) = await self.mountSMBVolume(urlString: formattedURL)
+                
+                guard let currentIndex = self.targets.firstIndex(where: { $0.id == id }) else { return }
+                
+                if success {
+                    print("[DiskMonitor] SMB mount succeeded for \(id)")
+                    self.targets[currentIndex].state = .connected
+                    self.targets[currentIndex].retryCount = 0
+                    self.retryTasks.removeValue(forKey: id)
+                } else {
+                    print("[DiskMonitor] SMB mount failed for \(id): \(errorMsg ?? "unknown error")")
+                    
+                    if isRetry {
+                        // Ensure retry wasn't cancelled while mount was running
+                        guard self.targets[currentIndex].state == .retrying else {
+                            print("[DiskMonitor] Retry for \(id) was cancelled during mount attempt.")
+                            return
+                        }
+                        
+                        self.targets[currentIndex].retryCount += 1
+                        if self.targets[currentIndex].retryCount < self.maxRetries {
+                            self.scheduleRetry(for: id)
+                        } else {
+                            print("[DiskMonitor] Max retries reached for \(id). Resetting to disconnected.")
+                            self.targets[currentIndex].state = .disconnected
+                            self.targets[currentIndex].retryCount = 0
+                            self.retryTasks.removeValue(forKey: id)
+                            IslandStateModel.shared.showNotification(text: "❌ \(id) 自动重试失败", mode: .disk)
+                        }
+                    } else {
+                        self.targets[currentIndex].state = .disconnected
+                        self.targets[currentIndex].retryCount = 0
+                        IslandStateModel.shared.showNotification(text: "❌ \(id) 挂载失败", mode: .disk)
+                    }
+                }
+            }
+        }
+    }
+    
+    func cancelRetry(id: String) {
+        retryTasks[id]?.cancel()
+        retryTasks.removeValue(forKey: id)
+        if let index = targets.firstIndex(where: { $0.id == id }) {
+            targets[index].retryCount = 0
+            if targets[index].state == .retrying {
+                targets[index].state = .disconnected
+            }
+            print("[DiskMonitor] Cancelled retry for \(id)")
         }
     }
     
     func removeTarget(id: String) {
+        cancelRetry(id: id)
         targets.removeAll { $0.id == id }
+        TaiChiSettings.shared.activeSMBMounts.removeAll { $0.id == id }
     }
     
     func disconnect(id: String) {
+        cancelRetry(id: id)
         guard let index = targets.firstIndex(where: { $0.id == id }) else { return }
         let target = targets[index]
+        manuallyDisconnectedIDs.insert(id)
         
         if target.type == .rclone {
             // For rclone, use external script
@@ -224,70 +313,158 @@ class DiskMonitorManager: ObservableObject {
         targets[index].retryCount = 0
     }
     
+    // MARK: - Internal Helpers
+    
+    private func formatSMBURL(_ remotePath: String) -> String {
+        let trimmed = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("smb://") {
+            return trimmed
+        } else if trimmed.hasPrefix("//") {
+            return "smb:" + trimmed
+        } else if trimmed.hasPrefix("/") {
+            return "smb:/" + trimmed
+        } else {
+            return "smb://" + trimmed
+        }
+    }
+    
+    private func mountSMBVolume(urlString: String) async -> (success: Bool, error: String?) {
+        await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            let escapedUrl = urlString.replacingOccurrences(of: "\\", with: "\\\\")
+                                      .replacingOccurrences(of: "\"", with: "\\\"")
+            process.arguments = ["-e", "mount volume \"\(escapedUrl)\""]
+            let errorPipe = Pipe()
+            process.standardError = errorPipe
+            let outPipe = Pipe()
+            process.standardOutput = outPipe
+            
+            do {
+                try process.run()
+                process.waitUntilExit()
+                let success = (process.terminationStatus == 0)
+                var errorString: String? = nil
+                if !success {
+                    let errData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                    errorString = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                return (success, errorString)
+            } catch {
+                return (false, error.localizedDescription)
+            }
+        }.value
+    }
+    
     // MARK: - Internal Handlers
     
     private func handleMountEvent(url: URL) {
         let path = url.path
-        // If it's in our known targets, mark it connected
         if let index = targets.firstIndex(where: { $0.localPath == path || $0.id == url.lastPathComponent }) {
+            let targetId = targets[index].id
             targets[index].state = .connected
             targets[index].retryCount = 0
+            cancelRetry(id: targetId)
             IslandStateModel.shared.showNotification(text: "✅ \(targets[index].id) 已连接", mode: .disk)
         } else {
-            // If it's a new unknown volume, maybe we just passively add it?
-            // Optional: Auto-discover passively mounted network drives
+            // Auto-discover passively mounted network drives
+            guard path.hasPrefix("/Volumes/") else { return }
+            
+            // Get remote path from mount command
+            let mountOutput = getMountCommandOutput()
+            for line in mountOutput {
+                if line.contains(" on \(path) (smbfs") || line.contains(" on \(path) (") {
+                    let remotePart = line.components(separatedBy: " on ").first ?? ""
+                    if remotePart.hasPrefix("//") {
+                        let id = url.lastPathComponent
+                        if !self.targets.contains(where: { $0.id == id }) {
+                            let newTarget = MountTarget(id: id, remotePath: remotePart, localPath: path, type: .smb, isActive: true, state: .connected)
+                            self.targets.append(newTarget)
+                            
+                            let newMountConfig = SMBMountConfig(id: id, remotePath: remotePart, localPath: path)
+                            TaiChiSettings.shared.activeSMBMounts.append(newMountConfig)
+                            
+                            IslandStateModel.shared.showNotification(text: "🔗 \(id) 自动加入监控", mode: .disk)
+                        }
+                    }
+                    break
+                }
+            }
         }
     }
     
     private func handleUnmountEvent(url: URL) {
         let path = url.path
         if let index = targets.firstIndex(where: { $0.localPath == path || $0.id == url.lastPathComponent }) {
+            let targetId = targets[index].id
             targets[index].state = .disconnected
+            targets[index].retryCount = 0
+            retryTasks[targetId]?.cancel()
+            retryTasks.removeValue(forKey: targetId)
             IslandStateModel.shared.showNotification(text: "⚠️ \(targets[index].id) 已断开", mode: .disk)
             
-            // Trigger retry logic if it's an active SMB mount and network is available
-            if targets[index].isActive && isNetworkAvailable {
-                scheduleRetry(for: targets[index].id)
+            // Trigger retry logic if it's an active SMB mount and network is available, and was not manually disconnected
+            if manuallyDisconnectedIDs.contains(targetId) {
+                manuallyDisconnectedIDs.remove(targetId)
+                print("[DiskMonitor] Target \(targetId) was manually disconnected, skipping auto-retry.")
+            } else if targets[index].isActive && isNetworkAvailable {
+                scheduleRetry(for: targetId)
             }
         }
     }
     
     private func triggerAutoReconnect() {
         // Find all active targets that are disconnected and try to reconnect them
-        for target in targets where target.isActive && target.state == .disconnected {
-            scheduleRetry(for: target.id)
+        for target in targets where target.isActive {
+            if target.state == .disconnected {
+                scheduleRetry(for: target.id)
+            } else if target.state == .retrying && retryTasks[target.id] == nil {
+                // If it was in retrying state but had no active retry task, restart retry
+                scheduleRetry(for: target.id)
+            }
         }
     }
     
     private func scheduleRetry(for id: String) {
         guard let index = targets.firstIndex(where: { $0.id == id }) else { return }
         guard isNetworkAvailable else { return } // Safe check
+        guard targets[index].isActive else { return }
         
         // Max retries
-        if targets[index].retryCount >= 5 {
-            print("[DiskMonitor] Max retries reached for \\(id). Waiting for manual intervention.")
+        if targets[index].retryCount >= maxRetries {
+            print("[DiskMonitor] Max retries reached for \(id). Waiting for manual intervention.")
             targets[index].state = .disconnected
+            targets[index].retryCount = 0
+            retryTasks.removeValue(forKey: id)
             return
         }
         
         targets[index].state = .retrying
         let currentRetry = targets[index].retryCount
-        targets[index].retryCount += 1
         
-        // Exponential backoff: 5, 15, 45... (for simplicity: 5 * 3^n)
+        // Exponential backoff: 5, 15, 45... (5 * 3^n)
         let delay = 5.0 * pow(3.0, Double(currentRetry))
         
-        print("[DiskMonitor] Scheduling retry for \\(id) in \\(delay) seconds (Attempt \\(currentRetry + 1)/5)")
+        print("[DiskMonitor] Scheduling retry for \(id) in \(delay) seconds (Attempt \(currentRetry + 1)/\(maxRetries))")
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self = self else { return }
-            // Re-check conditions before attempting
-            if let tIndex = self.targets.firstIndex(where: { $0.id == id }), 
-               self.targets[tIndex].state == .retrying,
-               self.isNetworkAvailable {
-                print("[DiskMonitor] Attempting to reconnect \\(id)...")
-                self.connect(id: id)
+        retryTasks[id]?.cancel()
+        retryTasks[id] = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                // Task was cancelled
+                return
             }
+            guard let self = self, !Task.isCancelled else { return }
+            // Re-check conditions before attempting
+            guard let tIndex = self.targets.firstIndex(where: { $0.id == id }),
+                  self.targets[tIndex].state == .retrying,
+                  self.isNetworkAvailable else {
+                return
+            }
+            
+            print("[DiskMonitor] Attempting to reconnect \(id) (Attempt \(currentRetry + 1)/\(self.maxRetries))...")
+            self.connect(id: id, isRetry: true)
         }
     }
     

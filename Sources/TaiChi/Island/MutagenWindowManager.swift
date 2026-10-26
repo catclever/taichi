@@ -6,7 +6,11 @@ class MutagenWindowManager {
     static let shared = MutagenWindowManager()
     private var window: NSWindow?
     
-    func show() {
+    func show(for sessionId: String? = nil) {
+        if let sessionId = sessionId {
+            MutagenManager.shared.pendingSelectionId = sessionId
+        }
+        
         if let window = window {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)

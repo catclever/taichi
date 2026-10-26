@@ -434,10 +434,12 @@ struct TaiChiOverlayView: View {
                             }
                     )
                 
-                FluidCoreView(isVisible: isVisible)
-                    .frame(width: config.hubSize, height: config.hubSize)
-                    .rotationEffect(.degrees(clickRotation))
-                    .allowsHitTesting(false)
+                if isVisible {
+                    FluidCoreView(isVisible: isVisible)
+                        .frame(width: config.hubSize, height: config.hubSize)
+                        .rotationEffect(.degrees(clickRotation))
+                        .allowsHitTesting(false)
+                }
                 
                 // ⚠️ 位置记录注释：
                 // 将设置按钮刚好卡在屏幕物理底边（呈现被切掉一半的高级隐藏效果）。
@@ -646,17 +648,18 @@ struct FluidCoreView: View {
             // 能量团 A (阳)
             Circle()
                 .fill(Color.cyan.opacity(0.5))
-                .blur(radius: 20)
+                .blur(radius: isVisible ? 20 : 0)
                 .offset(x: -15, y: -15)
                 .scaleEffect(breathingScale)
             
             // 能量团 B (阴)
             Circle()
                 .fill(Color.purple.opacity(0.4))
-                .blur(radius: 20)
+                .blur(radius: isVisible ? 20 : 0)
                 .offset(x: 15, y: 15)
                 .scaleEffect(2.0 - breathingScale)
         }
+        .opacity(isVisible ? 1 : 0)
         .rotationEffect(.degrees(autoRotation))
         .mask(Circle())
         .onChange(of: isVisible) { visible in

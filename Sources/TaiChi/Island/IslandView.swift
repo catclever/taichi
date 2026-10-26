@@ -1,6 +1,24 @@
 import SwiftUI
-
 import Cocoa
+import Combine
+
+// =========================================================================================
+// [BUG FIX: Timer Deactivation & Animation Layer Isolation]
+// 1. Problem:
+//    - `@State private var timer = Timer.publish(...).autoconnect()` was unconditionally firing at 10Hz
+//      continuously on the main runloop, even when playback was paused or lyrics were not pinned.
+//    - `SpinningRecord` and `WaveformView` always initialized `isAnimating = true` on appearance regardless
+//      of playback status, and continuous repeating animations caused parent `NotchShape` and `ZStack`
+//      to recalculate paths and re-render every single display frame.
+// 2. Resolution:
+//    - Replaced the persistent timer publisher with a lifecycle-managed `lyricTimer: AnyCancellable?`
+//      that only connects when `mediaObserver.state.isPlaying && stateModel.isLyricPinned && !stateModel.isLyricDetached && shouldShowLyrics`.
+//    - In `SpinningRecord` and `WaveformView`, only enable `isAnimating = true` in `onAppear` if `isPlaying == true`.
+//    - Applied `.drawingGroup()` to `SpinningRecord` and `WaveformView` to composite recurring animations
+//      into dedicated offscreen GPU (Metal) layers, completely isolating them from parent shape recalculations.
+// 3. Caveats:
+//    - Ensure `evaluateLyricTimer()` is invoked whenever playback status, pinned status, or detached status changes.
+// =========================================================================================
 
 struct IslandView: View {
     @ObservedObject var mediaObserver = MediaObserver.shared
@@ -13,7 +31,7 @@ struct IslandView: View {
     @State private var currentArtwork: NSImage?
     @State private var waveformColor: Color = .orange
     
-    @State private var timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+    @State private var lyricTimer: AnyCancellable?
     @State private var localElapsedTime: Double = 0.0
     
     private var shouldShowLyrics: Bool {
@@ -90,16 +108,29 @@ struct IslandView: View {
                 .offset(y: -50),
             alignment: .top
         )
+        .overlay(
+            Color.clear
+                .frame(width: baseNotchWidth, height: baseNotchHeight)
+                .contentShape(Rectangle())
+                .onRightClick {
+                    if stateModel.state != .modeSwitcher && stateModel.isLocationInPhysicalNotch(NSEvent.mouseLocation) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            stateModel.state = .modeSwitcher
+                        }
+                    }
+                },
+            alignment: .top
+        )
         .contentShape(Rectangle())
+        .onHover { isHovered in
+            stateModel.isHovering = isHovered
+        }
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleWidth)
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.capsuleHeight)
         .animation(.spring(response: 0.4, dampingFraction: 0.7, blendDuration: 0), value: stateModel.state)
         .onChange(of: stateModel.isNotchHovered) { isNotchHovered in
             cooldownTimer?.invalidate()
             if isNotchHovered && stateModel.state == .trackChanged && !mediaObserver.state.title.isEmpty {
-                // Instantly expand if they actively move into the notch from stage 1?
-                // Wait, if they just transitioned to stage 1, they didn't actively move into the notch.
-                // Let's just use a 1.5s timer so there's a slight delay, making it feel like a smooth 2-stage interaction.
                 cooldownTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
                     Task { @MainActor in
                         if self.stateModel.isNotchHovered && self.stateModel.state == .trackChanged {
@@ -137,12 +168,12 @@ struct IslandView: View {
         }
         .onChange(of: stateModel.isCenterNotchHovered) { isCenterHovered in
             if isCenterHovered {
-                if stateModel.state == .multiAppList || stateModel.state == .modeSwitcher { return }
+                if stateModel.state == .multiAppList || stateModel.state == .modeSwitcher || stateModel.state == .expanded { return }
                 
                 panelExpandTimer?.invalidate()
                 panelExpandTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
                     Task { @MainActor in
-                        if self.stateModel.isCenterNotchHovered && self.stateModel.state != .multiAppList && self.stateModel.state != .modeSwitcher {
+                        if self.stateModel.isCenterNotchHovered && self.stateModel.state != .multiAppList && self.stateModel.state != .modeSwitcher && self.stateModel.state != .expanded {
                             self.stateModel.currentMode = .media
                             withAnimation {
                                 self.stateModel.state = .expanded
@@ -168,25 +199,53 @@ struct IslandView: View {
         }
         .onChange(of: stateModel.isLyricPinned) { _ in
             updateStateDimensions()
+            evaluateLyricTimer()
         }
-        .onReceive(timer) { _ in
-            guard stateModel.isLyricPinned && mediaObserver.state.isPlaying else { return }
-            let actualTime = mediaObserver.state.currentElapsedTime
-            if actualTime > mediaObserver.state.duration && mediaObserver.state.duration > 0 {
-                localElapsedTime = mediaObserver.state.duration
-            } else {
-                localElapsedTime = actualTime
-            }
+        .onChange(of: stateModel.isLyricDetached) { _ in
+            evaluateLyricTimer()
+        }
+        .onChange(of: shouldShowLyrics) { _ in
+            evaluateLyricTimer()
+        }
+        .onChange(of: mediaObserver.state.isPlaying) { _ in
+            updateStateDimensions()
+            evaluateLyricTimer()
+        }
+        .onChange(of: mediaObserver.state.elapsedTime) { newValue in
+            localElapsedTime = newValue
         }
         .onAppear {
             updateStateDimensions()
             updateArtwork(data: mediaObserver.state.artworkData)
+            evaluateLyricTimer()
+        }
+        .onDisappear {
+            lyricTimer?.cancel()
+            lyricTimer = nil
         }
         .onChange(of: stateModel.state) { _ in
             updateStateDimensions()
         }
-        .onChange(of: mediaObserver.state.isPlaying) { _ in
-            updateStateDimensions()
+    }
+    
+    private func evaluateLyricTimer() {
+        let shouldRun = mediaObserver.state.isPlaying && stateModel.isLyricPinned && !stateModel.isLyricDetached && shouldShowLyrics
+        if shouldRun {
+            if lyricTimer == nil {
+                lyricTimer = Timer.publish(every: 0.1, on: .main, in: .common)
+                    .autoconnect()
+                    .sink { _ in
+                        let actualTime = mediaObserver.state.currentElapsedTime
+                        if actualTime > mediaObserver.state.duration && mediaObserver.state.duration > 0 {
+                            localElapsedTime = mediaObserver.state.duration
+                        } else {
+                            localElapsedTime = actualTime
+                        }
+                    }
+            }
+        } else {
+            lyricTimer?.cancel()
+            lyricTimer = nil
         }
     }
     
@@ -284,7 +343,7 @@ struct IslandView: View {
                 // Left: Spinning Record
                 if let img = currentArtwork {
                     SpinningRecord(image: img, isPlaying: mediaObserver.state.isPlaying)
-                        .frame(width: 26 * notchScale, height: 26 * notchScale) // Increased from 20
+                        .frame(width: 26 * notchScale, height: 26 * notchScale)
                         .contentShape(Rectangle())
                         .padding(.leading, 12 * notchScale)
                         .onTapGesture {
@@ -321,7 +380,7 @@ struct IslandView: View {
                     if let appIcon = getAppIcon(bundleId: mediaObserver.state.bundleIdentifier) {
                         Image(nsImage: appIcon)
                             .resizable()
-                            .frame(width: 26 * notchScale, height: 26 * notchScale) // Increased from 20
+                            .frame(width: 26 * notchScale, height: 26 * notchScale)
                             .opacity(0.3)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .id(mediaObserver.state.bundleIdentifier)
@@ -381,8 +440,6 @@ struct IslandView: View {
         }
         .frame(width: stateModel.capsuleWidth, height: baseNotchHeight, alignment: .center)
     }
-            
-
     
     private var trackChangedContent: some View {
         VStack(spacing: 0) {
@@ -432,6 +489,7 @@ struct IslandView: View {
                     velocity: 30.0
                 )
             }
+            
             Spacer()
         }
     }
@@ -496,7 +554,6 @@ struct IslandView: View {
                         if self.mediaObserver.state.isPlaying {
                             withAnimation { self.stateModel.state = .trackChanged }
                         }
-                        // If not playing, stay in .idle. updateStateDimensions will show the icons since isHovering is true.
                     }
                 }
             }
@@ -527,7 +584,6 @@ struct IslandView: View {
         trackChangeTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { _ in
             Task { @MainActor in
                 withAnimation {
-                    // Only go back to idle if we haven't been manually expanded
                     if self.stateModel.state == .trackChanged {
                         self.stateModel.state = .idle
                     }
@@ -583,11 +639,17 @@ struct SpinningRecord: View {
                     : .default,
                 value: isAnimating && isPlaying
             )
+            .drawingGroup()
             .onAppear {
-                isAnimating = true
+                if isPlaying {
+                    isAnimating = true
+                }
             }
             .onDisappear {
                 isAnimating = false
+            }
+            .onChange(of: isPlaying) { playing in
+                isAnimating = playing
             }
     }
 }
@@ -607,8 +669,14 @@ struct WaveformView: View {
                     .animation(isPlaying ? .easeInOut(duration: 0.3).repeatForever().delay(Double(i) * 0.1) : .default, value: isAnimating && isPlaying)
             }
         }
+        .drawingGroup()
         .onAppear {
-            isAnimating = true
+            if isPlaying {
+                isAnimating = true
+            }
+        }
+        .onDisappear {
+            isAnimating = false
         }
         .onChange(of: isPlaying) { playing in
             isAnimating = playing
@@ -667,5 +735,11 @@ extension NSImage {
             color = NSColor(hue: h, saturation: s / scale, brightness: minBrightness, alpha: a)
         }
         return color
+    }
+}
+
+extension View {
+    func onRightClick(_ action: @escaping () -> Void) -> some View {
+        self.background(RightClickCatcherView(onRightClick: action))
     }
 }

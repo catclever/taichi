@@ -1,8 +1,27 @@
 import Cocoa
 import SwiftUI
-
 import Combine
 import os.log
+
+// =========================================================================================
+// [BUG FIX: WindowServer Compositing, Hover Throttling & Redundant State Broadcasts]
+// 1. Problem:
+//    - Hidden lyric window previously kept `alphaValue = 0.0` but stayed attached to the WindowServer tree
+//      (`orderFront`), forcing unnecessary WindowServer GPU composition passes.
+//    - Mouse movement event monitors invoked `checkMouseHover()` on every mouse pixel movement without throttling,
+//      causing high CPU wakeups during normal mouse activity.
+//    - Unconditional writes to `@Published` properties (`isNotchHovered`, `isCenterNotchHovered`, `isHoveringIcons`)
+//      broadcasted `objectWillChange` on every mouse event even if values were unchanged, thrashing SwiftUI views.
+//    - Redundant `window.alphaValue` assignments in `setPanelFocusedState()` incurred unnecessary WindowServer IPC.
+// 2. Resolution:
+//    - Implemented `updateLyricWindowVisibility()` with `orderOut(nil)` upon hiding and `orderFront(nil)` before showing.
+//    - Added 50ms throttling to mouse moved monitors using `lastHoverCheckTime`.
+//    - Added equality guards before updating `@Published` hover states on `IslandStateModel`.
+//    - Added epsilon delta check (`abs(window.alphaValue - targetAlpha) > 0.001`) before updating `window.alphaValue`.
+// 3. Caveats:
+//    - Ensure `orderFront(nil)` is called before adjusting alpha to 1.0 when the lyric window becomes visible.
+//    - Maintain 50ms throttle threshold for smooth responsiveness without human-perceptible lag.
+// =========================================================================================
 
 @MainActor
 public class IslandManager: NSObject, NSWindowDelegate {
@@ -23,6 +42,10 @@ public class IslandManager: NSObject, NSWindowDelegate {
     private var localClickMonitor: Any?
     private var pausedStartTime: Date?
     private var lastIsVisibleDueToApps: Bool = true
+    
+    private var lastHoverCheckTime: TimeInterval = 0
+    private var mouseMonitor: Any?
+    private var localMouseMonitor: Any?
     
     private override init() {
         super.init()
@@ -45,13 +68,17 @@ public class IslandManager: NSObject, NSWindowDelegate {
         let inMultiApp = multiAppListWindow?.frame.contains(location) ?? false
         let inMain = window?.frame.contains(location) ?? false
         
-        if event.type == .rightMouseDown && inMain {
-            DispatchQueue.main.async {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                    stateModel.state = .modeSwitcher
+        if event.type == .rightMouseDown {
+            if stateModel.isLocationInPhysicalNotch(location) {
+                if stateModel.state != .modeSwitcher {
+                    DispatchQueue.main.async {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            stateModel.state = .modeSwitcher
+                        }
+                    }
                 }
+                return
             }
-            return
         }
         
         if stateModel.state == .modeSwitcher {
@@ -154,6 +181,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.isOpaque = false
+        panel.alphaValue = 0.0
         
         let lyricView = StandaloneLyricView().environmentObject(IslandStateModel.shared)
         let hostView = AcceptingFirstMouseHostingView(rootView: AnyView(lyricView))
@@ -163,7 +191,7 @@ public class IslandManager: NSObject, NSWindowDelegate {
         self.lyricHostingView = hostView
         self.lyricWindow = panel
         
-        panel.orderFront(nil)
+        // Window visibility is actively managed by updateLyricWindowVisibility to avoid composition overhead
         NotchSpaceManager.shared.notchSpace.windows.insert(panel)
     }
     
@@ -206,21 +234,25 @@ public class IslandManager: NSObject, NSWindowDelegate {
         NotchSpaceManager.shared.notchSpace.windows.insert(panel)
     }
     
-    private var mouseMonitor: Any?
-    private var localMouseMonitor: Any?
-    
     private func startGlobalHoverTimer() {
-        // [BUG FIX: High CPU Usage]
-        // Replaced the 50ms polling timer with an event-driven mouseMoved monitor
-        // to prevent extreme CPU wakeups and battery drain when the mouse is idle.
+        // [BUG FIX: High CPU Usage & 50ms Throttling]
+        // Replaced unthrottled mouseMoved monitors with a 50ms rate limit to prevent CPU wakeups
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
+            guard let self = self else { return }
+            let now = Date().timeIntervalSince1970
+            guard now - self.lastHoverCheckTime > 0.05 else { return }
+            self.lastHoverCheckTime = now
             Task { @MainActor in
-                self?.checkMouseHover()
+                self.checkMouseHover()
             }
         }
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            guard let self = self else { return event }
+            let now = Date().timeIntervalSince1970
+            guard now - self.lastHoverCheckTime > 0.05 else { return event }
+            self.lastHoverCheckTime = now
             Task { @MainActor in
-                self?.checkMouseHover()
+                self.checkMouseHover()
             }
             return event
         }
@@ -281,9 +313,10 @@ public class IslandManager: NSObject, NSWindowDelegate {
             let notchMinY = mainScreen.frame.maxY - 36
             isNotchHovered = mouseLocation.x >= minX && mouseLocation.x <= maxX && mouseLocation.y >= notchMinY
             
-            // But we don't want the bottom popped-out part to count as notchHovered
-            // So if mouse Y is lower than notchMinY, it's not notchHovered.
-            stateModel.isNotchHovered = isNotchHovered
+            // Guard @Published updates to avoid redundant view invalidation broadcasts
+            if stateModel.isNotchHovered != isNotchHovered {
+                stateModel.isNotchHovered = isNotchHovered
+            }
             
             isMainHovered = mouseLocation.x >= minX && mouseLocation.x <= maxX && mouseLocation.y >= minY
             
@@ -295,8 +328,13 @@ public class IslandManager: NSObject, NSWindowDelegate {
             isHoveringIcons = isAnyHovered && !isCenterNotchHovered
         }
         
-        stateModel.isCenterNotchHovered = isCenterNotchHovered
-        stateModel.isHoveringIcons = isHoveringIcons
+        if stateModel.isCenterNotchHovered != isCenterNotchHovered {
+            stateModel.isCenterNotchHovered = isCenterNotchHovered
+        }
+        if stateModel.isHoveringIcons != isHoveringIcons {
+            stateModel.isHoveringIcons = isHoveringIcons
+        }
+        
         if stateModel.isLyricDetached, let lIndex = stateModel.lyricScreenIndex, lIndex < screens.count {
             let lScreen = screens[lIndex]
             let hitWidth: CGFloat = 390
@@ -330,13 +368,36 @@ public class IslandManager: NSObject, NSWindowDelegate {
         setPanelFocusedState(effectiveHover || isMultiAppHovered)
         
         if let lyricWindow = lyricWindow {
-            if lyricWindow.ignoresMouseEvents != !isLyricHovered {
-                lyricWindow.ignoresMouseEvents = !isLyricHovered
+            let targetIgnores = !isLyricHovered
+            if lyricWindow.ignoresMouseEvents != targetIgnores {
+                lyricWindow.ignoresMouseEvents = targetIgnores
             }
         }
         if let multiAppListWindow = multiAppListWindow {
             if multiAppListWindow.ignoresMouseEvents {
                 multiAppListWindow.ignoresMouseEvents = false
+            }
+        }
+    }
+    
+    private func updateLyricWindowVisibility(isVisible: Bool, isMirrored: Bool = false) {
+        guard let lyricWindow = lyricWindow else { return }
+        let shouldShow = isVisible && !isMirrored
+        let targetAlpha: CGFloat = shouldShow ? 1.0 : 0.0
+        
+        if shouldShow {
+            if !lyricWindow.isVisible {
+                lyricWindow.orderFront(nil)
+            }
+            if abs(lyricWindow.alphaValue - targetAlpha) > 0.001 {
+                lyricWindow.alphaValue = targetAlpha
+            }
+        } else {
+            if abs(lyricWindow.alphaValue - 0.0) > 0.001 {
+                lyricWindow.alphaValue = 0.0
+            }
+            if lyricWindow.isVisible {
+                lyricWindow.orderOut(nil)
             }
         }
     }
@@ -349,12 +410,9 @@ public class IslandManager: NSObject, NSWindowDelegate {
         guard !screens.isEmpty else { return }
         
         // --- 1. Determine Target Screen ---
-        // Prioritize built-in screen (notch) first.
-        // If not found, fallback to the main screen (screens[0])
         var targetScreen: NSScreen = screens[0]
         var targetIndex = 0
         
-        // Find built-in screen (often has a subpixel layout or specific localized name, but checking for notch area is more reliable if available. For simplicity, we check if there's a screen with origin 0,0 usually built-in, or just default to 0. A more robust way is checking for safe area insets).
         if let builtInIndex = screens.firstIndex(where: { $0.frame.origin == .zero }) {
             targetScreen = screens[builtInIndex]
             targetIndex = builtInIndex
@@ -370,13 +428,13 @@ public class IslandManager: NSObject, NSWindowDelegate {
         let mainDisplayId = CGMainDisplayID()
         let isMirrored = CGDisplayIsInMirrorSet(mainDisplayId) != 0
         
-        // Only show if:
-        // 1. Not mirrored (or if we want to show on mirror, adjust this)
-        // 2. Either something is playing/paused OR user is hovering
         let shouldShow = isIslandVisibleDueToApps()
         let isVisible = !isMirrored && (shouldShow || stateModel.isHovering)
         
-        window.alphaValue = isVisible ? 1.0 : 0.0
+        let targetWindowAlpha: CGFloat = isVisible ? 1.0 : 0.0
+        if abs(window.alphaValue - targetWindowAlpha) > 0.001 {
+            window.alphaValue = targetWindowAlpha
+        }
         
         let width: CGFloat = 800
         let height: CGFloat = 200
@@ -421,8 +479,9 @@ public class IslandManager: NSObject, NSWindowDelegate {
             }
             
             let isDetached = targetLyricIndex != nil && targetLyricIndex != targetIndex
+            let shouldShowLyric = stateModel.isLyricPinned && isDetached && (targetLyricIndex != nil && targetLyricIndex! < screens.count)
             
-            if stateModel.isLyricPinned, isDetached, let lIndex = targetLyricIndex, lIndex < screens.count {
+            if shouldShowLyric, let lIndex = targetLyricIndex, lIndex < screens.count {
                 let lScreen = screens[lIndex]
                 let lX = lScreen.frame.origin.x + (lScreen.frame.width - width) / 2
                 let lY = lScreen.frame.maxY - height
@@ -430,9 +489,9 @@ public class IslandManager: NSObject, NSWindowDelegate {
                 if lyricWindow.frame != newFrame {
                     lyricWindow.setFrame(newFrame, display: true)
                 }
-                lyricWindow.alphaValue = isMirrored ? 0.0 : 1.0
+                updateLyricWindowVisibility(isVisible: true, isMirrored: isMirrored)
             } else {
-                lyricWindow.alphaValue = 0.0
+                updateLyricWindowVisibility(isVisible: false, isMirrored: isMirrored)
             }
         }
         
@@ -455,9 +514,14 @@ public class IslandManager: NSObject, NSWindowDelegate {
                     host.frame = NSRect(x: 0, y: 0, width: mWidth, height: mHeight)
                 }
                 
-                multiAppWindow.alphaValue = isMirrored ? 0.0 : 1.0
+                let targetAlpha: CGFloat = isMirrored ? 0.0 : 1.0
+                if abs(multiAppWindow.alphaValue - targetAlpha) > 0.001 {
+                    multiAppWindow.alphaValue = targetAlpha
+                }
             } else {
-                multiAppWindow.alphaValue = 0.0
+                if abs(multiAppWindow.alphaValue - 0.0) > 0.001 {
+                    multiAppWindow.alphaValue = 0.0
+                }
             }
         }
     }
@@ -469,14 +533,19 @@ public class IslandManager: NSObject, NSWindowDelegate {
         let isMirrored = IslandStateModel.shared.activeScreenIndex >= NSScreen.screens.count
         let isVisible = !isMirrored && (shouldShow || IslandStateModel.shared.isHovering)
         
+        let targetAlpha: CGFloat
         if isVisible {
             if !focused && IslandStateModel.shared.isPinned {
-                window.alphaValue = 0.5
+                targetAlpha = 0.5
             } else {
-                window.alphaValue = 1.0
+                targetAlpha = 1.0
             }
         } else {
-            window.alphaValue = 0.0
+            targetAlpha = 0.0
+        }
+        
+        if abs(window.alphaValue - targetAlpha) > 0.001 {
+            window.alphaValue = targetAlpha
         }
         
         if window.ignoresMouseEvents != !focused {

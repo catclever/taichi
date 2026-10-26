@@ -111,6 +111,7 @@ class TaiChiSettings: ObservableObject {
     static let shared = TaiChiSettings()
     
     private var isInitializing = true
+    @Published var enableMutagen: Bool = false { didSet { saveEnableMutagen() } }
     
     
     @Published var showMenuBarLyrics: Bool = UserDefaults.standard.bool(forKey: "showMenuBarLyrics") {
@@ -211,6 +212,16 @@ class TaiChiSettings: ObservableObject {
     
     // Wallpaper Engine 配置
 
+    @Published var useEagleForWallpapers: Bool = false {
+        didSet { saveWallpaperSettings() }
+    }
+    @Published var eagleSkipLocalSave: Bool = true {
+        didSet { saveWallpaperSettings() }
+    }
+    @Published var eaglePendingTasks: [WallpaperHistoryEntry] = [] {
+        didSet { saveWallpaperSettings() }
+    }
+    
     @Published var wallpaperSaveDir: String = ("~/Pictures/wallpapers" as NSString).expandingTildeInPath {
         didSet { saveWallpaperSettings() }
     }
@@ -347,6 +358,7 @@ class TaiChiSettings: ObservableObject {
             hsConfigPath = hsPath
         }
         
+        enableMutagen = UserDefaults.standard.bool(forKey: "enableMutagen")
         isFloatingFeatureEnabled = UserDefaults.standard.bool(forKey: "isFloatingFeatureEnabled")
         isTelescopeEnabled = UserDefaults.standard.bool(forKey: "isTelescopeEnabled")
         isAudioKeepAliveEnabled = UserDefaults.standard.bool(forKey: "isAudioKeepAliveEnabled")
@@ -357,9 +369,18 @@ class TaiChiSettings: ObservableObject {
         
         
 
+        useEagleForWallpapers = UserDefaults.standard.bool(forKey: "useEagleForWallpapers")
+        if UserDefaults.standard.object(forKey: "eagleSkipLocalSave") != nil {
+            eagleSkipLocalSave = UserDefaults.standard.bool(forKey: "eagleSkipLocalSave")
+        } else {
+            eagleSkipLocalSave = true
+        }
         if let dir = UserDefaults.standard.string(forKey: "wallpaperSaveDir") { wallpaperSaveDir = dir }
         if let data = UserDefaults.standard.data(forKey: "wallpaperChannels"), let ch = try? JSONDecoder().decode([String: [String]].self, from: data) { wallpaperChannels = ch }
         if let data = UserDefaults.standard.data(forKey: "wallpaperHistory"), let hs = try? JSONDecoder().decode([String: [WallpaperHistoryEntry]].self, from: data) { wallpaperHistory = hs }
+        if let data = UserDefaults.standard.data(forKey: "eaglePendingTasks"), let tasks = try? JSONDecoder().decode([WallpaperHistoryEntry].self, from: data) { eaglePendingTasks = tasks }
+        
+        loadActiveSMBMounts()
         
         syncFromHSConfig()
     }
@@ -480,6 +501,11 @@ class TaiChiSettings: ObservableObject {
         UserDefaults.standard.set(hsConfigPath, forKey: "hsConfigPath")
     }
     
+    private func saveEnableMutagen() {
+        guard !isInitializing else { return }
+        UserDefaults.standard.set(enableMutagen, forKey: "enableMutagen")
+    }
+
     private func saveHSFeatures() {
         guard !isInitializing else { return }
         UserDefaults.standard.set(isFloatingFeatureEnabled, forKey: "isFloatingFeatureEnabled")
@@ -502,8 +528,11 @@ class TaiChiSettings: ObservableObject {
     
     private func saveWallpaperSettings() {
         guard !isInitializing else { return }
+        UserDefaults.standard.set(useEagleForWallpapers, forKey: "useEagleForWallpapers")
+        UserDefaults.standard.set(eagleSkipLocalSave, forKey: "eagleSkipLocalSave")
         UserDefaults.standard.set(wallpaperSaveDir, forKey: "wallpaperSaveDir")
         if let d = try? JSONEncoder().encode(wallpaperChannels) { UserDefaults.standard.set(d, forKey: "wallpaperChannels") }
         if let d = try? JSONEncoder().encode(wallpaperHistory) { UserDefaults.standard.set(d, forKey: "wallpaperHistory") }
+        if let d = try? JSONEncoder().encode(eaglePendingTasks) { UserDefaults.standard.set(d, forKey: "eaglePendingTasks") }
     }
 }

@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import AppKit
 
 
 enum IslandMode: String, Equatable {
@@ -77,5 +78,30 @@ class IslandStateModel: ObservableObject {
     private init() {
         self.isLyricPinned = UserDefaults.standard.bool(forKey: "isLyricPinned")
         self.savedLyricScreenName = UserDefaults.standard.string(forKey: "savedLyricScreenName")
+    }
+    
+    public func isLocationInPhysicalNotch(_ location: NSPoint) -> Bool {
+        let screens = NSScreen.screens
+        guard activeScreenIndex < screens.count else { return false }
+        let screen = screens[activeScreenIndex]
+        
+        let hasNotch = screen.safeAreaInsets.top > 0
+        let notchHeight: CGFloat = hasNotch ? screen.safeAreaInsets.top : 38
+        let notchWidth: CGFloat = {
+            if hasNotch,
+               let left = screen.auxiliaryTopLeftArea,
+               let right = screen.auxiliaryTopRightArea {
+                let w = screen.frame.width - left.width - right.width
+                if w > 0 { return w }
+            }
+            return 190
+        }()
+        
+        let minX = screen.frame.midX - (notchWidth / 2)
+        let maxX = screen.frame.midX + (notchWidth / 2)
+        let minY = screen.frame.maxY - notchHeight
+        let maxY = screen.frame.maxY
+        
+        return location.x >= minX && location.x <= maxX && location.y >= minY && location.y <= maxY
     }
 }

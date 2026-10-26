@@ -1,6 +1,21 @@
 import SwiftUI
-
 import Combine
+
+// =========================================================================================
+// [BUG FIX: Standalone Lyric View Inactive Timer Lifecycle & Battery Drain]
+// 1. Problem:
+//    `StandaloneLyricView` previously kept a 10Hz timer running unconditionally whenever
+//    `isPlaying && shouldShowLyrics`, even when lyrics were NOT pinned or NOT detached to an external screen.
+//    Because the lyric window existed with `alphaValue = 0.0`, the timer ticked continuously in the background,
+//    wasting CPU cycles and triggering SwiftUI view graph invalidations.
+// 2. Resolution:
+//    - In `startTimer()`, strictly guard against `stateModel.isLyricPinned && stateModel.isLyricDetached`.
+//    - Added reactive `.onChange(of: stateModel.isLyricPinned)` and `.onChange(of: stateModel.isLyricDetached)`
+//      listeners that immediately cancel and nullify the timer (`stopTimer()`) when not detached and pinned.
+// 3. Caveats:
+//    - `localElapsedTime` resumes seamlessly when re-pinned or re-detached by syncing with
+//      `mediaObserver.state.elapsedTime`.
+// =========================================================================================
 
 struct StandaloneLyricView: View {
     @ObservedObject var stateModel = IslandStateModel.shared
@@ -98,18 +113,29 @@ struct StandaloneLyricView: View {
             startTimer()
         }
         .onDisappear {
-            timer?.cancel()
-            timer = nil
+            stopTimer()
         }
         .onChange(of: mediaObserver.state.elapsedTime) { newValue in
             localElapsedTime = newValue
         }
-        .onChange(of: mediaObserver.state.isPlaying) { isPlaying in
-            if isPlaying {
-                startTimer()
+        .onChange(of: mediaObserver.state.isPlaying) { _ in
+            startTimer()
+        }
+        .onChange(of: shouldShowLyrics) { _ in
+            startTimer()
+        }
+        .onChange(of: stateModel.isLyricPinned) { pinned in
+            if !(pinned && stateModel.isLyricDetached) {
+                stopTimer()
             } else {
-                timer?.cancel()
-                timer = nil
+                startTimer()
+            }
+        }
+        .onChange(of: stateModel.isLyricDetached) { detached in
+            if !(stateModel.isLyricPinned && detached) {
+                stopTimer()
+            } else {
+                startTimer()
             }
         }
         .onTapGesture(count: 2) {
@@ -131,17 +157,19 @@ struct StandaloneLyricView: View {
         }
     }
     
-    private func startTimer() {
+    private func stopTimer() {
         timer?.cancel()
-        if mediaObserver.state.isPlaying {
-            timer = Timer.publish(every: 0.1, on: .main, in: .common)
-                .autoconnect()
-                .sink { _ in
-                    localElapsedTime += 0.1
-                }
-        } else {
-            timer = nil
-        }
+        timer = nil
+    }
+    
+    private func startTimer() {
+        stopTimer()
+        guard stateModel.isLyricPinned && stateModel.isLyricDetached && mediaObserver.state.isPlaying && shouldShowLyrics else { return }
+        timer = Timer.publish(every: 0.1, on: .main, in: .common)
+            .autoconnect()
+            .sink { _ in
+                localElapsedTime += 0.1
+            }
     }
 
     private func getCornerRadii() -> (top: CGFloat, bottom: CGFloat) {

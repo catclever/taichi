@@ -133,97 +133,89 @@ struct SettingsButton: View {
     
     @State private var isHovered = false
     @State private var showTaiChi = false
-    @State private var hoverTimer: Timer?
+    @State private var hoverTask: Task<Void, Never>?
     @State private var lastClickTime = Date.distantPast
     @State private var clickTask: Task<Void, Never>?
+    @State private var rotationCount: Int = 0
     
     var shouldShowApp: Bool {
         return lastApp != nil && !showTaiChi
     }
     
     var body: some View {
-        Button(action: {
-            let now = Date()
-            let isDoubleClick = now.timeIntervalSince(lastClickTime) < 0.3
+        ZStack {
+            Circle()
+                .fill(Material.thinMaterial) // 参考图中的浅色通透毛玻璃
+                .frame(width: 40, height: 40)
+            .overlay(
+                Circle().stroke(Color.white.opacity(isHovered ? 0.3 : 0.12), lineWidth: 1)
+            )
             
-            if isDoubleClick {
-                clickTask?.cancel()
-                openSettings()
+            if shouldShowApp, let app = lastApp {
+                Image(nsImage: app.runningApp?.icon ?? NSWorkspace.shared.icon(forFile: app.residentApp?.path ?? ""))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 20, height: 20)
             } else {
-                // Single click
-                if lastApp == nil {
-                    // No app available, single click is settings instantly (no need to wait for double click)
-                    openSettings()
-                } else {
-                    // There IS a lastApp, so double click does something different. We MUST wait to differentiate.
-                    clickTask = Task {
-                        try? await Task.sleep(nanoseconds: 300_000_000)
-                        if !Task.isCancelled {
-                            if shouldShowApp {
-                                // Icon = App -> Single = App
-                                if let app = lastApp {
-                                    onOpenApp?(app)
-                                }
-                            } else {
-                                // Icon = TaiChi -> Single = Settings
-                                openSettings()
-                            }
-                        }
-                    }
-                }
-            }
-            lastClickTime = now
-        }) {
-            ZStack {
-                Circle()
-                    .fill(Material.thinMaterial) // 参考图中的浅色通透毛玻璃
-                    .frame(width: 40, height: 40)
-                .overlay(
-                    Circle().stroke(Color.white.opacity(isHovered ? 0.3 : 0.12), lineWidth: 1)
-                )
-                
-                if shouldShowApp, let app = lastApp {
-                    Image(nsImage: app.runningApp?.icon ?? NSWorkspace.shared.icon(forFile: app.residentApp?.path ?? ""))
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 20, height: 20)
-                } else {
-                    YinYangIcon()
-                        .frame(width: 20, height: 20)
-                        .rotationEffect(.degrees(isHovered ? 180 : 0))
-                        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHovered)
-                }
-            }
-            .background(RightClickCatcherView {
-                if shouldShowApp {
-                    openSettings()
-                } else {
-                    if let app = lastApp {
-                        onOpenApp?(app)
-                    } else {
-                        openSettings()
-                    }
-                }
-            })
-            .scaleEffect(isHovered ? 1.1 : 1.0)
-            .contentShape(Circle())
-            .onHover { hovering in
-                isHovered = hovering
-                hoverTimer?.invalidate()
-                if hovering && shouldShowApp {
-                    hoverTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
-                        Task { @MainActor in
-                            withAnimation {
-                                self.showTaiChi = true
-                            }
-                        }
-                    }
-                } else if !hovering {
-                    showTaiChi = false
-                }
+                YinYangIcon()
+                    .frame(width: 20, height: 20)
+                    .rotationEffect(.degrees(Double(rotationCount) * 180))
+                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: rotationCount)
             }
         }
-        .buttonStyle(.plain)
+        .overlay(
+            MouseInteractionView(
+                onLeftClick: {
+                    if lastApp == nil {
+                        openSettings()
+                    } else {
+                        if shouldShowApp {
+                            if let app = lastApp { onOpenApp?(app) }
+                        } else {
+                            openSettings()
+                        }
+                    }
+                },
+                onDoubleClick: {
+                    openSettings()
+                },
+                onRightClick: {
+                    if shouldShowApp {
+                        openSettings()
+                    } else {
+                        if let app = lastApp { onOpenApp?(app) } else { openSettings() }
+                    }
+                }
+            )
+        )
+        .scaleEffect(isHovered ? 1.1 : 1.0)
+        .contentShape(Circle())
+        .onHover { hovering in
+            isHovered = hovering
+            hoverTask?.cancel()
+            
+            if hovering {
+                if !shouldShowApp {
+                    rotationCount += 1
+                } else {
+                    hoverTask = Task {
+                        do {
+                            try await Task.sleep(nanoseconds: 2_000_000_000)
+                            await MainActor.run {
+                                withAnimation {
+                                    self.showTaiChi = true
+                                    self.rotationCount += 1
+                                }
+                            }
+                        } catch {
+                            // Task cancelled
+                        }
+                    }
+                }
+            } else {
+                showTaiChi = false
+            }
+        }
     }
     
     private func openSettings() {
@@ -325,7 +317,69 @@ struct RightClickCatcherView: NSViewRepresentable {
 
 class RightClickNSView: NSView {
     var onRightClick: (() -> Void)?
+    
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        return true
+    }
+    
+    override func rightMouseDown(with event: NSEvent) {}
+    
     override func rightMouseUp(with event: NSEvent) {
         onRightClick?()
     }
+}
+
+// [Bug Fix Document]
+// 问题：在 SwiftUI 中使用 `Button` 嵌套 `NSView`，会导致内部/背后的其他指针事件（如右键点击）被强制吞噬。即使加上 `acceptsFirstMouse`，系统也无法稳定传递 `rightMouseUp`。此外，通过 Task 延迟算时间差来区分单击和双击，既不精准也不优雅。
+// 修复逻辑：
+// 1. 彻底抛弃 SwiftUI 原生的 `Button`，直接使用底层的 `NSView` 作为事件拦截器，并以 `.overlay` 的形式覆盖在交互区域上。
+// 2. 在原生的 `mouseDown` 中，直接利用系统 API `event.clickCount == 2` 来可靠、精准地识别双击。
+// 3. 必须重写 `acceptsFirstMouse` 返回 `true`，以绕过 macOS 的 First-Mouse 焦点吞噬机制，实现无焦点情况下的“触之即发”。
+// 注意事项：后续遇到类似“需要无焦点即刻响应，并且同时兼容区分左/右/双击”的悬浮窗交互，请直接使用这个 `MouseInteractionView`。
+struct MouseInteractionView: NSViewRepresentable {
+    var onLeftClick: () -> Void
+    var onDoubleClick: () -> Void
+    var onRightClick: () -> Void
+    
+    func makeNSView(context: Context) -> MouseInteractionNSView {
+        let view = MouseInteractionNSView()
+        view.onLeftClick = onLeftClick
+        view.onDoubleClick = onDoubleClick
+        view.onRightClick = onRightClick
+        return view
+    }
+    func updateNSView(_ nsView: MouseInteractionNSView, context: Context) {
+        nsView.onLeftClick = onLeftClick
+        nsView.onDoubleClick = onDoubleClick
+        nsView.onRightClick = onRightClick
+    }
+}
+
+class MouseInteractionNSView: NSView {
+    var onLeftClick: (() -> Void)?
+    var onDoubleClick: (() -> Void)?
+    var onRightClick: (() -> Void)?
+    var clickTask: Task<Void, Never>?
+    
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { return true }
+    
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            clickTask?.cancel()
+            onDoubleClick?()
+        } else {
+            clickTask?.cancel()
+            clickTask = Task {
+                do {
+                    try await Task.sleep(nanoseconds: 300_000_000)
+                    if !Task.isCancelled {
+                        await MainActor.run { self.onLeftClick?() }
+                    }
+                } catch {}
+            }
+        }
+    }
+    
+    override func rightMouseDown(with event: NSEvent) {}
+    override func rightMouseUp(with event: NSEvent) { onRightClick?() }
 }

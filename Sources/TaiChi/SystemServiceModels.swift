@@ -17,6 +17,7 @@ public struct TaiChiServiceManifest: Codable, Sendable, Equatable, Hashable {
     public var webPath: String?
     public var icon: String?
     public var refactoredFiles: [String]?
+    public var disabled: Bool?
 
     enum CodingKeys: String, CodingKey {
         case schema = "$schema"
@@ -34,6 +35,7 @@ public struct TaiChiServiceManifest: Codable, Sendable, Equatable, Hashable {
         case webPath = "web_path"
         case icon
         case refactoredFiles = "refactored_files"
+        case disabled
     }
 
     enum AltCodingKeys: String, CodingKey {
@@ -59,7 +61,8 @@ public struct TaiChiServiceManifest: Codable, Sendable, Equatable, Hashable {
         hasWebUI: Bool? = nil,
         webPath: String? = nil,
         icon: String? = nil,
-        refactoredFiles: [String]? = nil
+        refactoredFiles: [String]? = nil,
+        disabled: Bool? = nil
     ) {
         self.schema = schema
         self.id = id
@@ -75,6 +78,7 @@ public struct TaiChiServiceManifest: Codable, Sendable, Equatable, Hashable {
         self.webPath = webPath
         self.icon = icon
         self.refactoredFiles = refactoredFiles
+        self.disabled = disabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -110,6 +114,7 @@ public struct TaiChiServiceManifest: Codable, Sendable, Equatable, Hashable {
         self.icon = try container.decodeIfPresent(String.self, forKey: .icon)
         self.refactoredFiles = (try? container.decodeIfPresent([String].self, forKey: .refactoredFiles))
             ?? (try? alt?.decodeIfPresent([String].self, forKey: .refactoredFiles))
+        self.disabled = try container.decodeIfPresent(Bool.self, forKey: .disabled)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -128,6 +133,7 @@ public struct TaiChiServiceManifest: Codable, Sendable, Equatable, Hashable {
         try container.encodeIfPresent(webPath, forKey: .webPath)
         try container.encodeIfPresent(icon, forKey: .icon)
         try container.encodeIfPresent(refactoredFiles, forKey: .refactoredFiles)
+        try container.encodeIfPresent(disabled, forKey: .disabled)
     }
 }
 

@@ -57,14 +57,27 @@ public class SystemServiceManager: ObservableObject, @unchecked Sendable {
             return
         }
 
+        // 1. Read global ~/Library/Services/.taichiignore if present
+        let globalIgnoreURL = servicesDirURL.appendingPathComponent(".taichiignore")
+        var ignoredNames: Set<String> = []
+        if let content = try? String(contentsOf: globalIgnoreURL, encoding: .utf8) {
+            let lines = content.components(separatedBy: .newlines)
+            for line in lines {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty && !trimmed.hasPrefix("#") {
+                    ignoredNames.insert(trimmed)
+                }
+            }
+        }
+
         var newManaged: [TaiChiServiceItem] = []
         var newUnmanaged: [URL] = []
 
         for entry in entries {
             let name = entry.lastPathComponent
 
-            // Skip hidden items
-            if name.hasPrefix(".") {
+            // Skip hidden items or directories starting with underscore (e.g. _archived)
+            if name.hasPrefix(".") || name.hasPrefix("_") {
                 continue
             }
 
@@ -79,11 +92,28 @@ public class SystemServiceManager: ObservableObject, @unchecked Sendable {
                 continue
             }
 
+            // Skip if listed in global .taichiignore
+            if ignoredNames.contains(name) {
+                continue
+            }
+
+            // Skip if directory contains a local .taichiignore or .taichi-ignore marker
+            let localIgnore1 = entry.appendingPathComponent(".taichiignore")
+            let localIgnore2 = entry.appendingPathComponent(".taichi-ignore")
+            if FileManager.default.fileExists(atPath: localIgnore1.path) || FileManager.default.fileExists(atPath: localIgnore2.path) {
+                continue
+            }
+
             let manifestURL = entry.appendingPathComponent("taichi-service.json")
             if FileManager.default.fileExists(atPath: manifestURL.path) {
                 do {
                     let data = try Data(contentsOf: manifestURL)
                     let manifest = try JSONDecoder().decode(TaiChiServiceManifest.self, from: data)
+
+                    // Skip services explicitly disabled in manifest
+                    if manifest.disabled == true {
+                        continue
+                    }
 
                     // Retain state and process for previously registered services
                     if let existing = managedServices.first(where: { $0.id == manifest.id }) {

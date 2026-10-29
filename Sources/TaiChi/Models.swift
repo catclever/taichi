@@ -152,7 +152,7 @@ class TaiChiSettings: ObservableObject {
     }
     
     // MARK: - System Service & Descartes Hub Settings
-    @Published var descartesHubURL: String = "ws://127.0.0.1:8080" {
+    @Published var descartesHubURL: String = "ws://172.16.51.7:8089" {
         didSet { saveDescartesHubURL() }
     }
     

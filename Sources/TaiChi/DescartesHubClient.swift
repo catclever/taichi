@@ -166,11 +166,48 @@ public class DescartesHubClient: ObservableObject {
             ]
         ]
 
+        let serviceName = serviceDirURL.lastPathComponent
+        let safeId = serviceName.lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+
+        let prompt = """
+        Your goal is to inspect the service directory '\(serviceDirURL.path)' (service: '\(serviceName)') and generate 'taichi-service.json'.
+
+        Mandatory Step-by-Step Procedure:
+        Step 1: Use 'list_dir' to see the files.
+        Step 2: Use 'read_file' on entrypoints or configuration files (such as main.py, config.json, etc.).
+        Step 3: Call 'save_manifest' to write the 'taichi-service.json' file:
+          {
+            "id": "\(safeId)",
+            "name": "\(serviceName)",
+            "description": "Short description of what the service does",
+            "category": "web",
+            "start_cmd": "python3 main.py",
+            "default_port": 8000,
+            "has_web_ui": true,
+            "web_path": "/"
+          }
+        Step 4: Only AFTER calling 'save_manifest', call 'send_message' with key: "result" and value: "Onboarding completed successfully".
+
+        CRITICAL: You MUST call 'save_manifest' to save the manifest before exiting via 'send_message'.
+        """
+
+        let systemPrompt = """
+        You are Descartes AI Service Architect for TaiChi Launcher.
+        Your job is to inspect unmanaged local services in ~/Library/Services/ and write a standardized declarative 'taichi-service.json' manifest using the 'save_manifest' tool.
+        Always inspect files before saving the manifest.
+        You MUST invoke 'save_manifest' before calling 'send_message'.
+        """
+
         let initPayload: [String: Any] = [
             "type": "init",
             "action": "init",
+            "task_name": "onboard_\(serviceName)",
+            "prompt": prompt,
+            "system_prompt": systemPrompt,
             "service_dir": serviceDirURL.path,
-            "service_name": serviceDirURL.lastPathComponent,
+            "service_name": serviceName,
             "llm_profile": llmProfile,
             "tools": tools
         ]
@@ -197,6 +234,7 @@ public class DescartesHubClient: ObservableObject {
             return
         }
 
+        log("[Descartes -> Hub] \(str)")
         webSocketTask?.send(.string(str)) { [weak self] error in
             if let error = error {
                 Task { @MainActor in
@@ -231,8 +269,12 @@ public class DescartesHubClient: ObservableObject {
         let rawData: Data?
         switch message {
         case .string(let text):
+            log("[Hub -> Descartes] \(text)")
             rawData = text.data(using: .utf8)
         case .data(let data):
+            if let text = String(data: data, encoding: .utf8) {
+                log("[Hub -> Descartes] \(text)")
+            }
             rawData = data
         @unknown default:
             rawData = nil
@@ -278,8 +320,13 @@ public class DescartesHubClient: ObservableObject {
     // MARK: - Stream Event Handling
 
     private func handleStreamEvent(_ json: [String: Any]) {
+        let event = json["event"] as? String
+
         // Parse streaming thoughts
         var thoughtText: String? = json["thought"] as? String
+        if thoughtText == nil, event == "thought" {
+            thoughtText = json["data"] as? String
+        }
         if thoughtText == nil, let dataDict = json["data"] as? [String: Any] {
             thoughtText = dataDict["thought"] as? String ?? dataDict["content"] as? String
         }
@@ -294,11 +341,20 @@ public class DescartesHubClient: ObservableObject {
             recordThought(thought)
         }
 
-        // Parse tool call starts or events
-        let event = json["event"] as? String
+        // Parse tool call starts or ends
         if event == "tool_call_start" {
-            let toolName = (json["tool"] as? String) ?? (json["name"] as? String) ?? ""
-            log("[Descartes] Calling tool: \(toolName)")
+            let dataDict = json["data"] as? [String: Any]
+            let toolName = (json["tool"] as? String)
+                ?? (dataDict?["tool"] as? String)
+                ?? (json["name"] as? String)
+                ?? ""
+            log("[Descartes AI] ⚙️ Executing tool: \(toolName)")
+        } else if event == "tool_call_end" {
+            let dataDict = json["data"] as? [String: Any]
+            let toolName = (json["tool"] as? String)
+                ?? (dataDict?["tool"] as? String)
+                ?? ""
+            log("[Descartes AI] 🏁 Finished tool: \(toolName)")
         } else if let content = json["content"] as? String, thoughtText == nil {
             log("[Descartes] \(content)")
         } else if let message = json["message"] as? String {
@@ -383,6 +439,10 @@ public class DescartesHubClient: ObservableObject {
 
             for item in items.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
                 let name = item.lastPathComponent
+                if name == ".venv" || name == "venv" {
+                    results.append("[ENV]  \(name)/ (Python virtual environment exists - prefer \(name)/bin/python)")
+                    continue
+                }
                 if name.hasPrefix(".") && !ignoreSet.contains(name) {
                     continue // filter hidden files
                 }
@@ -494,11 +554,14 @@ public class DescartesHubClient: ObservableObject {
                 return ("error", "Invalid manifest parameter format")
             }
 
+            // Validate against TaiChiServiceManifest
+            let decoded = try JSONDecoder().decode(TaiChiServiceManifest.self, from: jsonData)
+
             try jsonData.write(to: manifestURL, options: .atomic)
-            log("[Descartes] Successfully saved taichi-service.json manifest")
-            return ("ok", "Saved taichi-service.json successfully")
+            log("[Descartes] Successfully saved taichi-service.json manifest for '\(decoded.name)' (id: \(decoded.id))")
+            return ("ok", "Saved taichi-service.json successfully for '\(decoded.name)'. Please call 'send_message' to finish onboarding.")
         } catch {
-            return ("error", "Failed to save taichi-service.json: \(error.localizedDescription)")
+            return ("error", "Failed to validate or save taichi-service.json: \(error.localizedDescription)")
         }
     }
 
@@ -512,6 +575,20 @@ public class DescartesHubClient: ObservableObject {
     private func log(_ message: String) {
         lastLog = message
         onLogHandler?(message)
+
+        let logLine = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
+        let logURL = URL(fileURLWithPath: "/tmp/taichi_descartes_onboard.log")
+        if let data = logLine.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: logURL.path) {
+                if let fileHandle = try? FileHandle(forWritingTo: logURL) {
+                    fileHandle.seekToEndOfFile()
+                    fileHandle.write(data)
+                    fileHandle.closeFile()
+                }
+            } else {
+                try? data.write(to: logURL)
+            }
+        }
     }
 
     private func finishWithSuccess(_ result: String) {

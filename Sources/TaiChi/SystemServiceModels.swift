@@ -36,6 +36,15 @@ public struct TaiChiServiceManifest: Codable, Sendable, Equatable, Hashable {
         case refactoredFiles = "refactored_files"
     }
 
+    enum AltCodingKeys: String, CodingKey {
+        case startCmd = "startCmd"
+        case stopCmd = "stopCmd"
+        case defaultPort = "defaultPort"
+        case hasWebUI = "hasWebUI"
+        case webPath = "webPath"
+        case refactoredFiles = "refactoredFiles"
+    }
+
     public init(
         schema: String? = nil,
         id: String,
@@ -70,6 +79,8 @@ public struct TaiChiServiceManifest: Codable, Sendable, Equatable, Hashable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let alt = try? decoder.container(keyedBy: AltCodingKeys.self)
+
         self.schema = try container.decodeIfPresent(String.self, forKey: .schema)
         self.id = try container.decode(String.self, forKey: .id)
         self.name = try container.decode(String.self, forKey: .name)
@@ -78,13 +89,27 @@ public struct TaiChiServiceManifest: Codable, Sendable, Equatable, Hashable {
         self.workDir = (try? container.decodeIfPresent(String.self, forKey: .workDir))
             ?? (try? container.decodeIfPresent(String.self, forKey: .workDirAlt))
         self.entrypoint = try container.decodeIfPresent(String.self, forKey: .entrypoint)
-        self.startCmd = try container.decode(String.self, forKey: .startCmd)
-        self.stopCmd = try container.decodeIfPresent(String.self, forKey: .stopCmd)
-        self.defaultPort = try container.decodeIfPresent(Int.self, forKey: .defaultPort)
-        self.hasWebUI = try container.decodeIfPresent(Bool.self, forKey: .hasWebUI)
-        self.webPath = try container.decodeIfPresent(String.self, forKey: .webPath)
+
+        // Resilient startCmd decoding
+        if let cmd = try? container.decodeIfPresent(String.self, forKey: .startCmd) {
+            self.startCmd = cmd
+        } else if let altCmd = try? alt?.decodeIfPresent(String.self, forKey: .startCmd) {
+            self.startCmd = altCmd
+        } else {
+            self.startCmd = try container.decode(String.self, forKey: .startCmd)
+        }
+
+        self.stopCmd = (try? container.decodeIfPresent(String.self, forKey: .stopCmd))
+            ?? (try? alt?.decodeIfPresent(String.self, forKey: .stopCmd))
+        self.defaultPort = (try? container.decodeIfPresent(Int.self, forKey: .defaultPort))
+            ?? (try? alt?.decodeIfPresent(Int.self, forKey: .defaultPort))
+        self.hasWebUI = (try? container.decodeIfPresent(Bool.self, forKey: .hasWebUI))
+            ?? (try? alt?.decodeIfPresent(Bool.self, forKey: .hasWebUI))
+        self.webPath = (try? container.decodeIfPresent(String.self, forKey: .webPath))
+            ?? (try? alt?.decodeIfPresent(String.self, forKey: .webPath))
         self.icon = try container.decodeIfPresent(String.self, forKey: .icon)
-        self.refactoredFiles = try container.decodeIfPresent([String].self, forKey: .refactoredFiles)
+        self.refactoredFiles = (try? container.decodeIfPresent([String].self, forKey: .refactoredFiles))
+            ?? (try? alt?.decodeIfPresent([String].self, forKey: .refactoredFiles))
     }
 
     public func encode(to encoder: Encoder) throws {

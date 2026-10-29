@@ -64,6 +64,30 @@ public final class LauncherGateway: @unchecked Sendable {
         return handlerOrder.compactMap { handlers[$0] }
     }
     
+    public static var defaultIcon: [String: Any] {
+        if let bundleAppPath = Bundle.main.bundlePath as String?, bundleAppPath.hasSuffix(".app") {
+            return ["type": "fileicon", "path": bundleAppPath]
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.kael.taichi") {
+            return ["type": "fileicon", "path": url.path]
+        }
+        let fallbackApp = (NSHomeDirectory() as NSString).appendingPathComponent("Projects/taichi_launcher/TaiChi.app")
+        if FileManager.default.fileExists(atPath: fallbackApp) {
+            return ["type": "fileicon", "path": fallbackApp]
+        }
+        return ["path": "icon.png"]
+    }
+    
+    private func applyDefaultIcons(to items: [[String: Any]]) -> [[String: Any]] {
+        return items.map { item in
+            var mutable = item
+            if mutable["icon"] == nil {
+                mutable["icon"] = LauncherGateway.defaultIcon
+            }
+            return mutable
+        }
+    }
+    
     private func makeNavigationCards() -> [[String: Any]] {
         return allHandlers.map { h in
             var card: [String: Any] = [
@@ -75,12 +99,19 @@ public final class LauncherGateway: @unchecked Sendable {
             ]
             if let icon = h.iconPath {
                 card["icon"] = ["path": icon]
+            } else {
+                card["icon"] = LauncherGateway.defaultIcon
             }
             return card
         }
     }
     
     public func filter(rawQuery: String, explicitScope: String?) async -> [[String: Any]] {
+        let items = await resolveFilter(rawQuery: rawQuery, explicitScope: explicitScope)
+        return applyDefaultIcons(to: items)
+    }
+    
+    private func resolveFilter(rawQuery: String, explicitScope: String?) async -> [[String: Any]] {
         var cleanQuery = rawQuery
         if let decoded = cleanQuery.removingPercentEncoding {
             cleanQuery = decoded
@@ -196,7 +227,7 @@ public final class LauncherGateway: @unchecked Sendable {
     }
 }
 
-// MARK: - Service Launcher Handler (Stub)
+// MARK: - Service Launcher Handler
 
 public final class ServiceLauncherHandler: @unchecked Sendable, LauncherModuleHandler {
     public let namespace: String = "service"
@@ -208,21 +239,220 @@ public final class ServiceLauncherHandler: @unchecked Sendable, LauncherModuleHa
     
     public func handleFilter(query: String) async -> [[String: Any]] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if !q.isEmpty && !displayName.lowercased().contains(q) && !namespace.lowercased().contains(q) && !"系统服务".contains(q) {
+        
+        await MainActor.run {
+            SystemServiceManager.shared.scanServices()
+        }
+        
+        let managed = await MainActor.run {
+            SystemServiceManager.shared.managedServices
+        }
+        let unmanaged = await MainActor.run {
+            SystemServiceManager.shared.unmanagedDirectories
+        }
+        
+        var items: [[String: Any]] = []
+        
+        // 1. Managed services
+        for svc in managed {
+            let name = svc.manifest.name
+            let id = svc.id
+            let desc = svc.manifest.description ?? ""
+            let cat = svc.manifest.category ?? ""
+            
+            if !q.isEmpty {
+                let matches = name.lowercased().contains(q)
+                    || id.lowercased().contains(q)
+                    || desc.lowercased().contains(q)
+                    || cat.lowercased().contains(q)
+                if !matches { continue }
+            }
+            
+            let isRunning = svc.state.isRunning
+            let portStr = svc.assignedPort > 0 ? "Port: \(svc.assignedPort)" : ""
+            let statusDot = isRunning ? "🟢" : (svc.state.isStarting ? "🟡" : "⚪️")
+            
+            var title = "\(statusDot) \(name)"
+            if !portStr.isEmpty {
+                title += " (\(portStr))"
+            }
+            
+            var subtitle = ""
+            var actionArg = "service:start:\(id)"
+            var mods: [String: Any]? = nil
+            
+            if isRunning {
+                subtitle = "⚡️ 运行中 (PID \(svc.pid ?? 0)) - 回车打开/激活"
+                if svc.manifest.hasWebUI == true {
+                    actionArg = "service:open:\(id)"
+                } else {
+                    actionArg = "service:restart:\(id)"
+                }
+                mods = [
+                    "cmd": [
+                        "valid": true,
+                        "arg": "service:stop:\(id)",
+                        "subtitle": "🛑 停止该服务 (Cmd + Enter)"
+                    ]
+                ]
+            } else if svc.state.isStarting {
+                subtitle = "⏳ 启动中..."
+                actionArg = "service:stop:\(id)"
+            } else {
+                subtitle = "\(desc.isEmpty ? "已停止" : desc) - 回车启动服务"
+                actionArg = "service:start:\(id)"
+            }
+            
+            var item: [String: Any] = [
+                "title": title,
+                "subtitle": subtitle,
+                "arg": actionArg,
+                "icon": LauncherGateway.defaultIcon
+            ]
+            if let mods = mods {
+                item["mods"] = mods
+            }
+            items.append(item)
+        }
+        
+        // 2. Unmanaged directories (for AI onboarding via Descartes Hub)
+        let activeOnboardingPath = await MainActor.run {
+            SystemServiceManager.shared.activeOnboardingDir?.resolvingSymlinksInPath().path
+        }
+
+        for dirURL in unmanaged {
+            let dirName = dirURL.lastPathComponent
+            if !q.isEmpty && !dirName.lowercased().contains(q) && !"导入".contains(q) && !"onboard".contains(q) {
+                continue
+            }
+
+            let isOnboarding = (activeOnboardingPath == dirURL.resolvingSymlinksInPath().path)
+            let item: [String: Any]
+            if isOnboarding {
+                item = [
+                    "title": "🧠 AI 分析导入中: \(dirName)",
+                    "subtitle": "Descartes Hub 正在深度分析项目结构并生成规范化配置...",
+                    "arg": "service:noop",
+                    "icon": LauncherGateway.defaultIcon
+                ]
+            } else {
+                item = [
+                    "title": "✨ 导入服务: \(dirName)",
+                    "subtitle": "未配置 taichi-service.json - 回车通过 Descartes AI 智能分析与规范化",
+                    "arg": "service:onboard:\(dirName)",
+                    "icon": LauncherGateway.defaultIcon
+                ]
+            }
+            items.append(item)
+        }
+        
+        if items.isEmpty {
+            if q.isEmpty {
+                return [
+                    [
+                        "title": "系统服务列表 (Service Hub)",
+                        "subtitle": "目录 ~/Library/Services 下暂无待管理或待导入服务",
+                        "arg": "service:noop",
+                        "valid": false,
+                        "icon": LauncherGateway.defaultIcon
+                    ]
+                ]
+            }
             return []
         }
-        return [
-            [
-                "title": "系统服务列表 (Service Hub)",
-                "subtitle": "服务发现与管理暂未就绪（预留插槽）",
-                "arg": "service:noop",
-                "valid": false
-            ]
-        ]
+        
+        return items
     }
     
     public func handleAction(arg: String) async -> Bool {
-        return true
+        let trimmed = arg.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        
+        var action = ""
+        var target = ""
+        
+        if trimmed.hasPrefix("service:") {
+            let rest = String(trimmed.dropFirst(8)) // drops "service:"
+            let parts = rest.split(separator: ":", maxSplits: 1)
+            if parts.count == 2 {
+                action = String(parts[0])
+                target = String(parts[1])
+            } else if parts.count == 1 {
+                action = String(parts[0])
+            }
+        }
+        
+        guard !action.isEmpty else { return true }
+        
+        switch action {
+        case "start":
+            await MainActor.run {
+                SystemServiceManager.shared.startService(serviceId: target)
+            }
+            return true
+            
+        case "stop":
+            await MainActor.run {
+                SystemServiceManager.shared.stopService(serviceId: target)
+            }
+            return true
+            
+        case "restart":
+            await MainActor.run {
+                SystemServiceManager.shared.stopService(serviceId: target)
+                SystemServiceManager.shared.startService(serviceId: target)
+            }
+            return true
+            
+        case "open":
+            await MainActor.run {
+                guard let svc = SystemServiceManager.shared.managedServices.first(where: { $0.id == target }) else { return }
+                if !svc.state.isRunning {
+                    SystemServiceManager.shared.startService(serviceId: target)
+                }
+                let port = svc.assignedPort > 0 ? svc.assignedPort : (svc.manifest.defaultPort ?? 8000)
+                let path = svc.manifest.webPath ?? ""
+                let urlStr = "http://127.0.0.1:\(port)\(path)"
+                if let url = URL(string: urlStr) {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            return true
+            
+        case "onboard":
+            let dirName = target
+            await MainActor.run {
+                let rawPath = TaiChiSettings.shared.servicesDirectoryPath
+                let servicesPath = (rawPath as NSString).expandingTildeInPath
+                let targetDirURL = URL(fileURLWithPath: servicesPath).appendingPathComponent(dirName)
+                print("✨ [Descartes Hub] Triggering onboarding for \(targetDirURL.path)...")
+                SystemServiceManager.shared.onboardService(
+                    dirURL: targetDirURL,
+                    onThought: { thought in
+                        print("💭 [Descartes Thought]: \(thought)")
+                    },
+                    onLog: { log in
+                        print("📝 [Descartes Log]: \(log)")
+                    },
+                    completion: { result in
+                        switch result {
+                        case .success(let msg):
+                            print("✅ [Descartes Onboard Success]: \(msg)")
+                        case .failure(let err):
+                            print("❌ [Descartes Onboard Failure]: \(err.localizedDescription)")
+                        }
+                    }
+                )
+            }
+            return true
+            
+        case "noop":
+            return true
+            
+        default:
+            print("⚠️ [ServiceLauncherHandler] Unknown action: \(action)")
+            return false
+        }
     }
 }
 

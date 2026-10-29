@@ -279,7 +279,18 @@ public final class ServiceLauncherHandler: @unchecked Sendable, LauncherModuleHa
             
             var subtitle = ""
             var actionArg = "service:start:\(id)"
-            var mods: [String: Any]? = nil
+            var modsDict: [String: Any] = [
+                "alt+shift": [
+                    "valid": true,
+                    "arg": "service:ignore:\(id)",
+                    "subtitle": "🚫 忽略此服务，不再出现在启动器中 (Option + Shift + Enter)"
+                ],
+                "alt": [
+                    "valid": true,
+                    "arg": "service:ignore:\(id)",
+                    "subtitle": "🚫 忽略此服务 (Option + Enter)"
+                ]
+            ]
             
             if isRunning {
                 subtitle = "⚡️ 运行中 (PID \(svc.pid ?? 0)) - 回车打开/激活"
@@ -288,12 +299,10 @@ public final class ServiceLauncherHandler: @unchecked Sendable, LauncherModuleHa
                 } else {
                     actionArg = "service:restart:\(id)"
                 }
-                mods = [
-                    "cmd": [
-                        "valid": true,
-                        "arg": "service:stop:\(id)",
-                        "subtitle": "🛑 停止该服务 (Cmd + Enter)"
-                    ]
+                modsDict["cmd"] = [
+                    "valid": true,
+                    "arg": "service:stop:\(id)",
+                    "subtitle": "🛑 停止该服务 (Cmd + Enter)"
                 ]
             } else if svc.state.isStarting {
                 subtitle = "⏳ 启动中..."
@@ -307,11 +316,9 @@ public final class ServiceLauncherHandler: @unchecked Sendable, LauncherModuleHa
                 "title": title,
                 "subtitle": subtitle,
                 "arg": actionArg,
+                "mods": modsDict,
                 "icon": LauncherGateway.defaultIcon
             ]
-            if let mods = mods {
-                item["mods"] = mods
-            }
             items.append(item)
         }
         
@@ -340,6 +347,18 @@ public final class ServiceLauncherHandler: @unchecked Sendable, LauncherModuleHa
                     "title": "✨ 导入服务: \(dirName)",
                     "subtitle": "未配置 taichi-service.json - 回车通过 Descartes AI 智能分析与规范化",
                     "arg": "service:onboard:\(dirName)",
+                    "mods": [
+                        "alt+shift": [
+                            "valid": true,
+                            "arg": "service:ignore:\(dirName)",
+                            "subtitle": "🚫 忽略此目录，不再出现在启动器中 (Option + Shift + Enter)"
+                        ],
+                        "alt": [
+                            "valid": true,
+                            "arg": "service:ignore:\(dirName)",
+                            "subtitle": "🚫 忽略此目录 (Option + Enter)"
+                        ]
+                    ],
                     "icon": LauncherGateway.defaultIcon
                 ]
             }
@@ -446,6 +465,13 @@ public final class ServiceLauncherHandler: @unchecked Sendable, LauncherModuleHa
             }
             return true
             
+        case "ignore":
+            let dirOrId = target
+            await MainActor.run {
+                SystemServiceManager.shared.ignoreService(identifier: dirOrId)
+            }
+            return true
+
         case "noop":
             return true
             

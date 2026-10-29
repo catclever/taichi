@@ -122,7 +122,7 @@ def interactive_select(initial_query: str = ""):
             line = f"{display_title}{DIM}{display_sub}{RESET}\t{json.dumps(item, ensure_ascii=False)}"
             fzf_lines.append(line)
 
-        header = f"TaiChi 启动器 [{'全部' if not current_query else current_query}] | Enter: 执行/下钻 | Esc: 退出"
+        header = f"TaiChi 启动器 [{'全部' if not current_query else current_query}] | Enter: 执行/下钻 | Alt+Enter: 忽略 | Esc: 退出"
         fzf_cmd = [
             "fzf",
             "--ansi",
@@ -130,6 +130,7 @@ def interactive_select(initial_query: str = ""):
             "--height=45%",
             "--delimiter=\t",
             "--with-nth=1",
+            "--expect=alt-enter",
             f"--header={header}",
             "--prompt=tai> "
         ]
@@ -147,7 +148,12 @@ def interactive_select(initial_query: str = ""):
                 # User pressed Esc / Ctrl-C in fzf
                 return
 
-            selected_raw = stdout.strip().split("\t")
+            out_lines = stdout.strip().splitlines()
+            if len(out_lines) < 2:
+                return
+
+            key_pressed = out_lines[0].strip()
+            selected_raw = out_lines[1].split("\t")
             if len(selected_raw) < 2:
                 return
 
@@ -155,6 +161,17 @@ def interactive_select(initial_query: str = ""):
             arg = selected_item.get("arg", "")
             valid = selected_item.get("valid", True)
             autocomplete = selected_item.get("autocomplete", "").strip()
+            mods = selected_item.get("mods", {})
+
+            # Check if user pressed Alt+Enter for modifier action (ignore)
+            if key_pressed == "alt-enter":
+                alt_action = mods.get("alt+shift") or mods.get("alt")
+                if alt_action and alt_action.get("arg"):
+                    ignore_arg = alt_action["arg"]
+                    title = selected_item.get("title", "")
+                    print(f"{YELLOW}🚫 忽略: {BOLD}{title}{RESET}")
+                    trigger_action(ignore_arg)
+                    return
 
             # Check if this is a navigation card (e.g. scope:cyber or valid=false)
             if not valid or arg.startswith("scope:"):

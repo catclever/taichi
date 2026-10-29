@@ -363,4 +363,43 @@ public class SystemServiceManager: ObservableObject, @unchecked Sendable {
     public func getRecentLogs(serviceId: String) -> [String] {
         return serviceLogBuffers[serviceId] ?? []
     }
+
+    // MARK: - Service Ignore Action
+
+    /// Ignores a service or directory by writing a local .taichiignore marker and rescanning
+    public func ignoreService(identifier: String) {
+        let rawPath = TaiChiSettings.shared.servicesDirectoryPath
+        let servicesPath = (rawPath as NSString).expandingTildeInPath
+        let servicesDirURL = URL(fileURLWithPath: servicesPath)
+
+        var targetName = identifier
+        var targetURL: URL? = nil
+
+        if let svc = managedServices.first(where: { $0.id == identifier || $0.dirURL.lastPathComponent == identifier }) {
+            targetName = svc.manifest.name
+            targetURL = svc.dirURL
+        } else {
+            let candidate = servicesDirURL.appendingPathComponent(identifier)
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDir), isDir.boolValue {
+                targetURL = candidate
+            }
+        }
+
+        if let target = targetURL {
+            let ignoreFile = target.appendingPathComponent(".taichiignore")
+            try? "".write(to: ignoreFile, atomically: true, encoding: .utf8)
+            print("🚫 [SystemServiceManager] Created .taichiignore in \(target.path)")
+            scanServices()
+            showNotification(title: "TaiChi 服务已忽略", body: "\(targetName) 已标记忽略，不再出现在启动器中")
+        }
+    }
+
+    private func showNotification(title: String, body: String) {
+        let script = "display notification \"\(body)\" with title \"\(title)\""
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        try? process.run()
+    }
 }

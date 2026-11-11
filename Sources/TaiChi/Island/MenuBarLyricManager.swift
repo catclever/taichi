@@ -11,15 +11,20 @@ import Combine
 //    to ControlCenter and WindowServer on every frame, resulting in unacceptable battery drain and CPU load.
 // 2. Resolution:
 //    - Replaced in-button subviews with a lightweight, GPU-accelerated borderless Floating Overlay Window (`NSPanel`).
-//    - The overlay window is configured with `.statusBar` level, clear background, non-activating panel,
+//    - The overlay window is configured with above-statusBar level, clear background, non-activating panel,
 //      and `ignoresMouseEvents = true` so user clicks pass directly through to `NSStatusItem.button`.
-//    - When paused, the overlay window is hidden via `orderOut(nil)`, timers are stopped, and the status item
-//      shows a static "♪" symbol with variable width.
+//    - When paused, the overlay window remains visible with static text and no scrolling (`isScrolling = false`),
+//      and the 0.1s timer is stopped (`stopTimer()`), consuming zero CPU.
+//    - When stopped (or track empty), the overlay window is hidden via `orderOut(nil)`, timers are stopped,
+//      and the status item shows a static "♪" symbol with variable width.
 //    - When playing, the status item length is fixed to 150pt (acting as a transparent click receptor),
-//      and the overlay window tracks the button's screen coordinates, rendering lyrics via GPU/Metal.
+//      the 0.1s timer runs (`evaluateTimer()`), and the overlay window renders scrolling lyrics via GPU/Metal.
 // 3. Caveats:
 //    - The overlay window must track screen frame changes when displays reconfigure or status items move.
 //    - `ignoresMouseEvents = true` must be maintained so clicking the lyric still triggers the player popover.
+//    - `hidesOnDeactivate = false`, `canHide = false`, `level = mainMenu + 3` (27 > statusBar 25), and
+//      `NotchSpaceManager.shared.notchSpace` membership must be maintained so AppKit/WindowServer never strips
+//      or occludes the overlay window when TaiChi resigns active or switches Desktop / Full-Screen Spaces.
 // =========================================================================================
 
 class PassThroughView: NSView {
@@ -40,6 +45,8 @@ class MenuBarLyricManager: NSObject {
     
     private var statusItem: NSStatusItem?
     private var overlayWindow: NSPanel?
+    private weak var observedButtonWindow: NSWindow?
+    private var spaceSyncWorkItem: DispatchWorkItem?
     private var cancellables = Set<AnyCancellable>()
     private var lyricTimer: Timer?
     
@@ -58,12 +65,99 @@ class MenuBarLyricManager: NSObject {
     private override init() {
         super.init()
         setupObservers()
-        NotificationCenter.default.addObserver(self, selector: #selector(handleScreenParametersChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
-        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(handleScreenParametersChanged), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleScreenParametersChanged),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidResignActive),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleActiveSpaceChanged),
+            name: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil
+        )
     }
     
     @objc private func handleScreenParametersChanged() {
+        syncOverlayOnTransition()
+    }
+    
+    @objc private func handleAppDidResignActive() {
+        syncOverlayOnTransition()
+    }
+    
+    @objc private func handleActiveSpaceChanged() {
+        syncOverlayOnTransition()
+        // Re-sync after macOS Space swipe animation (~350ms) and BrainManager's 500ms focus-anchoring hook settle
+        spaceSyncWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.syncOverlayOnTransition()
+            }
+        }
+        spaceSyncWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
+    }
+    
+    @objc private func handleStatusBarWindowChanged() {
         updateOverlayPosition()
+    }
+    
+    private func observeStatusBarWindowIfNeeded(_ win: NSWindow) {
+        guard observedButtonWindow !== win else { return }
+        if let oldWin = observedButtonWindow {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didMoveNotification, object: oldWin)
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didResizeNotification, object: oldWin)
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeScreenNotification, object: oldWin)
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: oldWin)
+        }
+        observedButtonWindow = win
+        NotificationCenter.default.addObserver(self, selector: #selector(handleStatusBarWindowChanged), name: NSWindow.didMoveNotification, object: win)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleStatusBarWindowChanged), name: NSWindow.didResizeNotification, object: win)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleStatusBarWindowChanged), name: NSWindow.didChangeScreenNotification, object: win)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleStatusBarWindowChanged), name: NSWindow.didChangeOcclusionStateNotification, object: win)
+    }
+    
+    private func syncOverlayOnTransition() {
+        guard TaiChiSettings.shared.showMenuBarLyrics else { return }
+        let mediaState = MediaObserver.shared.state
+        guard mediaState.status != .stopped && !mediaState.title.isEmpty else {
+            updateOverlayPosition()
+            return
+        }
+        setupOverlayWindow()
+        updateOverlayPosition()
+        showOverlayWindow(forceSpaceRebind: true)
+    }
+    
+    private func showOverlayWindow(forceSpaceRebind: Bool = false) {
+        guard let overlay = overlayWindow else { return }
+        if !overlay.isVisible || forceSpaceRebind {
+            overlay.orderFrontRegardless()
+        }
+        if forceSpaceRebind {
+            NotchSpaceManager.shared.notchSpace.windows.remove(overlay)
+        }
+        if !NotchSpaceManager.shared.notchSpace.windows.contains(overlay) {
+            NotchSpaceManager.shared.notchSpace.windows.insert(overlay)
+        }
+    }
+    
+    private func hideOverlayWindow() {
+        guard let overlay = overlayWindow else { return }
+        if NotchSpaceManager.shared.notchSpace.windows.contains(overlay) {
+            NotchSpaceManager.shared.notchSpace.windows.remove(overlay)
+        }
+        if overlay.isVisible {
+            overlay.orderOut(nil)
+        }
     }
     
     private func setupObservers() {
@@ -81,23 +175,35 @@ class MenuBarLyricManager: NSObject {
             .store(in: &cancellables)
             
         MediaObserver.shared.$state
-            .map { $0.isPlaying }
+            .map { "\($0.status.rawValue)_\($0.title)_\($0.isPlaying)" }
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] isPlaying in
+            .sink { [weak self] _ in
                 guard let self = self else { return }
-                if !isPlaying {
-                    self.stopTimer()
+                let status = MediaObserver.shared.state.status
+                if status == .playing {
+                    self.evaluateTimer()
                     self.updateLyric()
                 } else {
-                    self.evaluateTimer()
+                    self.stopTimer()
+                    self.updateLyric()
+                }
+            }
+            .store(in: &cancellables)
+            
+        LyricManager.shared.$currentLyrics
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                if MediaObserver.shared.state.status == .paused {
+                    self.updateLyric()
                 }
             }
             .store(in: &cancellables)
     }
     
     private func evaluateTimer() {
-        let shouldRun = TaiChiSettings.shared.showMenuBarLyrics && MediaObserver.shared.state.isPlaying
+        let shouldRun = TaiChiSettings.shared.showMenuBarLyrics && MediaObserver.shared.state.status == .playing
         if shouldRun {
             if lyricTimer == nil {
                 let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -121,21 +227,26 @@ class MenuBarLyricManager: NSObject {
     private func setupOverlayWindow() {
         if overlayWindow != nil { return }
         
+        let initialRect = NSRect(x: 0, y: 0, width: 150, height: 24)
         let panel = NSPanel(
-            contentRect: .zero,
+            contentRect: initialRect,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        panel.level = .statusBar
+        // Strictly above NSStatusBarWindow (25) so ControlCenter menu bar refreshes never occlude it,
+        // while staying well below NSPopover (.popUpMenu = 101)
+        panel.level = NSWindow.Level(rawValue: Int(NSWindow.Level.mainMenu.rawValue) + 3)
+        panel.hidesOnDeactivate = false
+        panel.canHide = false
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        panel.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         
-        let cv = PassThroughView(frame: .zero)
+        let cv = PassThroughView(frame: initialRect)
         cv.wantsLayer = true
         cv.layer?.masksToBounds = true
         cv.layer?.backgroundColor = NSColor.clear.cgColor
@@ -159,6 +270,7 @@ class MenuBarLyricManager: NSObject {
     
     private func updateOverlayPosition() {
         guard let button = statusItem?.button, let win = button.window else { return }
+        observeStatusBarWindowIfNeeded(win)
         
         // Mirror the exact appearance and dynamically compute high-contrast text color without any background plate
         if let overlay = overlayWindow {
@@ -174,11 +286,24 @@ class MenuBarLyricManager: NSObject {
         
         let buttonFrameInWin = button.convert(button.bounds, to: nil)
         let screenFrame = win.convertToScreen(buttonFrameInWin)
-        if let overlay = overlayWindow {
+        if let overlay = overlayWindow, screenFrame.width > 0, screenFrame.height > 0 {
             if overlay.frame != screenFrame {
                 overlay.setFrame(screenFrame, display: true)
             }
-            clipView?.frame = overlay.contentView?.bounds ?? .zero
+            let contentBounds = overlay.contentView?.bounds ?? NSRect(origin: .zero, size: screenFrame.size)
+            if clipView?.frame != contentBounds {
+                clipView?.frame = contentBounds
+            }
+            if let cv = clipView, let lbl = lyricLabel, cv.bounds.height > 0, lbl.frame.height > 0 {
+                let targetY = floor((cv.bounds.height - lbl.frame.height) / 2.0)
+                if abs(lbl.frame.origin.y - targetY) > 0.1 {
+                    lbl.frame.origin.y = targetY
+                }
+            }
+            let targetAlpha = win.alphaValue
+            if abs(overlay.alphaValue - targetAlpha) > 0.01 {
+                overlay.alphaValue = targetAlpha
+            }
         }
     }
     
@@ -199,7 +324,16 @@ class MenuBarLyricManager: NSObject {
     
     private func removeStatusItem() {
         stopTimer()
-        overlayWindow?.orderOut(nil)
+        spaceSyncWorkItem?.cancel()
+        spaceSyncWorkItem = nil
+        if let oldWin = observedButtonWindow {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didMoveNotification, object: oldWin)
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didResizeNotification, object: oldWin)
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeScreenNotification, object: oldWin)
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: oldWin)
+            observedButtonWindow = nil
+        }
+        hideOverlayWindow()
         overlayWindow = nil
         clipView = nil
         lyricLabel = nil
@@ -213,8 +347,10 @@ class MenuBarLyricManager: NSObject {
         guard let item = statusItem, let button = item.button else { return }
         
         let mediaState = MediaObserver.shared.state
-        if !mediaState.isPlaying {
-            overlayWindow?.orderOut(nil)
+        
+        // 2. Stopped state or empty track: hide overlay and show static note ♪
+        if mediaState.status == .stopped || mediaState.title.isEmpty {
+            hideOverlayWindow()
             stopTimer()
             if currentFullLyric != "TaiChi" {
                 currentFullLyric = "TaiChi"
@@ -224,9 +360,13 @@ class MenuBarLyricManager: NSObject {
             return
         }
         
+        // 1 & 3: Playing or Paused
         let fixedWidth: CGFloat = 150
         if item.length != fixedWidth {
             item.length = fixedWidth
+            DispatchQueue.main.async { [weak self] in
+                self?.updateOverlayPosition()
+            }
         }
         if button.title != "" {
             button.title = ""
@@ -234,9 +374,7 @@ class MenuBarLyricManager: NSObject {
         
         setupOverlayWindow()
         updateOverlayPosition()
-        if overlayWindow?.isVisible != true {
-            overlayWindow?.orderFront(nil)
-        }
+        showOverlayWindow()
         
         let lyrics = LyricManager.shared.currentLyrics
         var newLyric = ""
@@ -249,11 +387,27 @@ class MenuBarLyricManager: NSObject {
             if currentIndex >= 0 && currentIndex < lyrics.count {
                 newLyric = lyrics[currentIndex].text
             }
+            if newLyric.isEmpty {
+                newLyric = "\(mediaState.title) - \(mediaState.artist)"
+            }
         }
         
+        // 1. Paused state: Static display without scrolling, timer stopped
+        if mediaState.status == .paused {
+            stopTimer()
+            self.isScrolling = false
+            currentFullLyric = newLyric
+            setDisplayText(newLyric, allowScrolling: false)
+            DispatchQueue.main.async { [weak self] in
+                self?.updateOverlayPosition()
+            }
+            return
+        }
+        
+        // 3. Playing state: Scroll and progress dynamically
         if newLyric != currentFullLyric {
             currentFullLyric = newLyric
-            setDisplayText(newLyric)
+            setDisplayText(newLyric, allowScrolling: true)
         } else if isScrolling {
             scrollOffset += 1.5
             let distance = textWidth - fixedWidth + 15
@@ -266,7 +420,7 @@ class MenuBarLyricManager: NSObject {
         }
     }
     
-    private func setDisplayText(_ text: String) {
+    private func setDisplayText(_ text: String, allowScrolling: Bool = true) {
         guard let cv = clipView, let lbl = lyricLabel else { return }
         
         // Cancel active animations just in case
@@ -282,7 +436,8 @@ class MenuBarLyricManager: NSObject {
         lbl.sizeToFit()
         
         // Center vertically in overlay container
-        lbl.frame.origin.y = (cv.bounds.height - lbl.frame.height) / 2
+        let containerHeight = cv.bounds.height > 0 ? cv.bounds.height : 24
+        lbl.frame.origin.y = floor((containerHeight - lbl.frame.height) / 2.0)
         
         if text.isEmpty || text == "TaiChi" {
             lbl.frame.origin.x = (cv.bounds.width - lbl.frame.width) / 2
@@ -292,13 +447,17 @@ class MenuBarLyricManager: NSObject {
             lbl.lineBreakMode = .byClipping
             lbl.frame.size.width = max(textWidth, fixedWidth)
             
-            if textWidth > fixedWidth {
+            if textWidth > fixedWidth && allowScrolling {
                 self.isScrolling = true
                 self.scrollOffset = -15 // Start with a small delay
                 lbl.frame.origin.x = 5
             } else {
                 self.isScrolling = false
-                lbl.frame.origin.x = (fixedWidth - textWidth) / 2
+                if textWidth > fixedWidth {
+                    lbl.frame.origin.x = 5
+                } else {
+                    lbl.frame.origin.x = (fixedWidth - textWidth) / 2
+                }
             }
         }
     }
@@ -309,14 +468,7 @@ class MenuBarLyricManager: NSObject {
         let clickCount = NSApp.currentEvent?.clickCount ?? 1
         if clickCount == 2 {
             popover?.performClose(nil)
-            let bundleId = MediaObserver.shared.state.bundleIdentifier
-            if !bundleId.isEmpty {
-                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
-                    let configuration = NSWorkspace.OpenConfiguration()
-                    configuration.activates = true
-                    NSWorkspace.shared.openApplication(at: url, configuration: configuration, completionHandler: nil)
-                }
-            }
+            MediaObserver.shared.activateMediaApp()
             return
         }
         

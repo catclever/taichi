@@ -12,12 +12,33 @@ struct DiskMonitorTab: View {
             if !isAdding {
                 List {
                     ForEach(settings.activeSMBMounts, id: \.id) { mount in
-                        HStack {
-                            VStack(alignment: .leading) {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(mount.id).font(.headline)
                                 Text(mount.remotePath).font(.caption).foregroundColor(.gray)
                             }
                             Spacer()
+                            
+                            Toggle("Auto Reconnect", isOn: Binding(
+                                get: { mount.isActive },
+                                set: { newValue in
+                                    if let idx = settings.activeSMBMounts.firstIndex(where: { $0.id == mount.id }) {
+                                        settings.activeSMBMounts[idx].isActive = newValue
+                                        if let tIdx = DiskMonitorManager.shared.targets.firstIndex(where: { $0.id == mount.id }) {
+                                            DiskMonitorManager.shared.targets[tIdx].isActive = newValue
+                                            if !newValue {
+                                                DiskMonitorManager.shared.cancelRetry(id: mount.id)
+                                            } else if DiskMonitorManager.shared.targets[tIdx].state == .disconnected {
+                                                DiskMonitorManager.shared.connect(id: mount.id)
+                                            }
+                                        }
+                                    }
+                                }
+                            ))
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .help("Auto reconnect when disconnected")
+                            
                             Button(action: {
                                 settings.activeSMBMounts.removeAll { $0.id == mount.id }
                                 DiskMonitorManager.shared.removeTarget(id: mount.id)
@@ -87,7 +108,7 @@ struct DiskMonitorTab: View {
         .padding()
         .onAppear {
             for mount in settings.activeSMBMounts {
-                DiskMonitorManager.shared.registerTarget(id: mount.id, localPath: mount.localPath, remotePath: mount.remotePath, type: .smb, isActive: true)
+                DiskMonitorManager.shared.registerTarget(id: mount.id, localPath: mount.localPath, remotePath: mount.remotePath, type: .smb, isActive: mount.isActive)
             }
         }
     }

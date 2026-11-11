@@ -36,10 +36,20 @@ struct ExpandedPanelView: View {
                         .frame(width: 40, height: 80)
                         .offset(x: 20, y: -20)
                 }
-                .onTapGesture {
-                    // Play/Pause
-                    mediaObserver.sendTargetedCommand(2) // 2 is kMRATogglePlayPause
-                }
+                .frame(width: 80, height: 80)
+                .contentShape(Circle())
+                .overlay(
+                    RecordClickOverlay(
+                        onLeftClick: {
+                            // Left-click: Play/Pause (0ms delay)
+                            mediaObserver.sendTargetedCommand(2) // 2 is kMRATogglePlayPause
+                        },
+                        onRightClick: {
+                            // Right-click: Activate/Open Media Player Window
+                            mediaObserver.activateMediaApp()
+                        }
+                    )
+                )
                 .padding(.leading, 20)
                 
                 // Middle/Right: Lyrics and Controls
@@ -321,5 +331,78 @@ struct LyricsDisplayView: View {
             }
         }
         .animation(.easeInOut(duration: 0.3), value: currentIndex)
+    }
+}
+
+struct RecordClickOverlay: NSViewRepresentable {
+    var onLeftClick: () -> Void
+    var onRightClick: () -> Void
+    
+    func makeNSView(context: Context) -> RecordClickNSView {
+        let view = RecordClickNSView()
+        view.onLeftClick = onLeftClick
+        view.onRightClick = onRightClick
+        return view
+    }
+    
+    func updateNSView(_ nsView: RecordClickNSView, context: Context) {
+        nsView.onLeftClick = onLeftClick
+        nsView.onRightClick = onRightClick
+    }
+    
+    final class RecordClickNSView: NSView {
+        var onLeftClick: (() -> Void)?
+        var onRightClick: (() -> Void)?
+        private var lastRightClickTime: TimeInterval = 0
+        
+        private func handleRightClick() {
+            let now = Date().timeIntervalSinceReferenceDate
+            if now - lastRightClickTime > 0.2 {
+                lastRightClickTime = now
+                print("🎵 [RecordClick] Right click action triggered -> activateMediaApp")
+                onRightClick?()
+            }
+        }
+        
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+            return true
+        }
+        
+        override func resetCursorRects() {
+            super.resetCursorRects()
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+        
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard let superview = self.superview else { return nil }
+            let localPoint = convert(point, from: superview)
+            guard bounds.contains(localPoint) else { return nil }
+            let center = NSPoint(x: bounds.midX, y: bounds.midY)
+            let dx = localPoint.x - center.x
+            let dy = localPoint.y - center.y
+            let radius = min(bounds.width, bounds.height) / 2.0
+            return (dx * dx + dy * dy <= radius * radius) ? self : nil
+        }
+        
+        override func mouseDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.control) {
+                print("🎵 [RecordClick] Control+Left click detected -> Right-click action")
+                handleRightClick()
+            } else {
+                print("🎵 [RecordClick] Left click detected -> Play/Pause")
+                onLeftClick?()
+            }
+        }
+        
+        override func rightMouseDown(with event: NSEvent) {
+            print("🎵 [RecordClick] rightMouseDown detected")
+            handleRightClick()
+        }
+        
+        override func menu(for event: NSEvent) -> NSMenu? {
+            print("🎵 [RecordClick] menu(for:) detected")
+            handleRightClick()
+            return nil
+        }
     }
 }

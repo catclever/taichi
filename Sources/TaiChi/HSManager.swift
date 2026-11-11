@@ -25,22 +25,36 @@ public class HSManager: @unchecked Sendable {
         print("🔗 [HSManager] Using security token: \(self.securityToken)")
         
         // 2. 检查并注入环境配置
-        let configWritten = injectConfigIfNeeded(taichiPort: taichiPort)
+        _ = injectConfigIfNeeded(taichiPort: taichiPort)
         
         // 3. 根据情况拉起或重载
         let runningApps = workspace.runningApplications
         let isRunning = runningApps.contains { $0.bundleIdentifier == hsBundleID }
         
         if isRunning {
-            print("🔄 [HSManager] Hammerspoon is already running, executing reload script via AppleScript to ensure connection...")
-            let scriptSource = "tell application \"Hammerspoon\" to execute lua code \"hs.reload()\""
-            var errorDict: NSDictionary?
-            if let appleScript = NSAppleScript(source: scriptSource) {
-                appleScript.executeAndReturnError(&errorDict)
-                if let error = errorDict {
-                    print("❌ [HSManager] AppleScript reload failed: \(error)")
-                } else {
-                    print("✅ [HSManager] Hammerspoon reloaded via AppleScript.")
+            print("🔄 [HSManager] Hammerspoon is already running, executing reload script asynchronously via AppleScript to ensure connection...")
+            // =========================================================================================
+            // [BUG FIX: Non-Blocking Hammerspoon Reload via AppleScript in Background Queue]
+            // 1. Problem:
+            //    Calling `appleScript.executeAndReturnError(&errorDict)` synchronously on MainActor in
+            //    `initialize(taichiPort:)` causes the TaiChi UI to freeze whenever Hammerspoon is busy
+            //    or slow to process AppleEvents (e.g. during gateway initialization or restart).
+            // 2. Resolution:
+            //    Moved AppleScript execution to `DispatchQueue.global(qos: .userInitiated).async` so the
+            //    gateway startup flow completes immediately without stalling the main UI run loop.
+            // 3. Caveats:
+            //    Errors during reload are logged asynchronously and do not block TaiChi operation.
+            // =========================================================================================
+            DispatchQueue.global(qos: .userInitiated).async {
+                let scriptSource = "tell application \"Hammerspoon\" to execute lua code \"hs.reload()\""
+                var errorDict: NSDictionary?
+                if let appleScript = NSAppleScript(source: scriptSource) {
+                    appleScript.executeAndReturnError(&errorDict)
+                    if let error = errorDict {
+                        print("❌ [HSManager] AppleScript reload failed: \(error)")
+                    } else {
+                        print("✅ [HSManager] Hammerspoon reloaded via AppleScript.")
+                    }
                 }
             }
         } else {

@@ -428,6 +428,7 @@ struct SystemSettingsTab: View {
     @Binding var hasMutagen: Bool
     @ObservedObject var settings = TaiChiSettings.shared
     @ObservedObject var permissions = PermissionsManager.shared
+    @ObservedObject var serverManager = ServerManager.shared
     
     var body: some View {
         Form {
@@ -436,11 +437,31 @@ struct SystemSettingsTab: View {
                     TextField("HTTP 网关端口:", value: $settings.httpPort, formatter: NumberFormatter())
                         .frame(width: 250)
                     Spacer()
+                    // =========================================================================================
+                    // [BUG FIX: Gateway Restart Button Loading State & Click Debounce]
+                    // 1. Problem:
+                    //    Previously, clicking "重启网关 (清除缓存)" did not indicate loading status and allowed
+                    //    repeated clicks, which could queue multiple restart cycles and freeze the UI.
+                    // 2. Resolution:
+                    //    Observed `serverManager.isRestarting`. When true, display a spinning `ProgressView`
+                    //    with "重启中..." and disable the button via `.disabled(serverManager.isRestarting)`.
+                    // 3. Caveats:
+                    //    The disabled modifier automatically styles and ignores user interaction during restart.
+                    // =========================================================================================
                     Button(action: {
-                        ServerManager.shared.restart()
+                        serverManager.restart()
                     }) {
-                        Label("重启网关 (清除缓存)", systemImage: "arrow.clockwise")
+                        if serverManager.isRestarting {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("重启中...")
+                            }
+                        } else {
+                            Label("重启网关 (清除缓存)", systemImage: "arrow.clockwise")
+                        }
                     }
+                    .disabled(serverManager.isRestarting)
                 }
                 TextField("服务脚本存放目录:", text: $settings.scriptsPath)
                 TextField("HS 主配置目录:", text: $settings.hsConfigPath)

@@ -3,8 +3,18 @@
 APP_NAME="TaiChi"
 APP_BUNDLE="$APP_NAME.app"
 
-# Detect binary path based on architecture
-if [ -d ".build/arm64-apple-macosx/debug" ]; then
+echo "Building Swift package..."
+swift build
+
+if [ $? -ne 0 ]; then
+    echo "Build failed!"
+    exit 1
+fi
+
+# Detect binary path based on SwiftPM / Swift 6.3 build output directory
+if [ -d ".build/out/Products/Debug" ]; then
+    BUILD_DIR=".build/out/Products/Debug"
+elif [ -d ".build/arm64-apple-macosx/debug" ]; then
     BUILD_DIR=".build/arm64-apple-macosx/debug"
 elif [ -d ".build/x86_64-apple-macosx/debug" ]; then
     BUILD_DIR=".build/x86_64-apple-macosx/debug"
@@ -13,14 +23,6 @@ else
 fi
 
 BIN_PATH="$BUILD_DIR/$APP_NAME"
-
-echo "Building Swift package..."
-swift build
-
-if [ $? -ne 0 ]; then
-    echo "Build failed!"
-    exit 1
-fi
 
 echo "Creating app bundle at $APP_BUNDLE..."
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
@@ -32,10 +34,8 @@ cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/"
 # Copy Resources bundle (SwiftPM generated)
 BUNDLE_NAME="${APP_NAME}_${APP_NAME}.bundle"
 if [ -d "$BUILD_DIR/$BUNDLE_NAME" ]; then
+    rm -rf "$APP_BUNDLE/Contents/Resources/$BUNDLE_NAME" "$APP_BUNDLE/$BUNDLE_NAME" "$APP_BUNDLE/Contents/MacOS/$BUNDLE_NAME"
     cp -R "$BUILD_DIR/$BUNDLE_NAME" "$APP_BUNDLE/Contents/Resources/"
-    # Workaround for SPM generated resource accessor in CLI tools looking in bundleURL root
-    cp -R "$BUILD_DIR/$BUNDLE_NAME" "$APP_BUNDLE/"
-    cp -R "$BUILD_DIR/$BUNDLE_NAME" "$APP_BUNDLE/Contents/MacOS/"
     # Workaround for SPM generated resource accessor in CLI tools looking in bundleURL root
     cp -R "$BUILD_DIR/$BUNDLE_NAME" "$APP_BUNDLE/"
     cp -R "$BUILD_DIR/$BUNDLE_NAME" "$APP_BUNDLE/Contents/MacOS/"

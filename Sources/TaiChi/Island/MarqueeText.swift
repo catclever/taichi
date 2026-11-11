@@ -1,14 +1,14 @@
 import SwiftUI
 
-
 struct MarqueeText: View {
     let text: String
     let font: Font
     let foregroundColor: Color
     let velocity: Double // points per second (e.g. 30)
+    var isPlaying: Bool = true
     
     var body: some View {
-        MarqueeTextInner(text: text, font: font, foregroundColor: foregroundColor, velocity: velocity)
+        MarqueeTextInner(text: text, font: font, foregroundColor: foregroundColor, velocity: velocity, isPlaying: isPlaying)
             .id(text)
     }
 }
@@ -18,11 +18,13 @@ struct MarqueeTextInner: View {
     let font: Font
     let foregroundColor: Color
     let velocity: Double
+    var isPlaying: Bool = true
 
     @State private var offset: CGFloat = 0
     @State private var textWidth: CGFloat = 0
     @State private var containerWidth: CGFloat = 0
     @State private var isAnimating: Bool = false
+    @State private var animationTask: Task<Void, Never>? = nil
     
     var body: some View {
         Text(text)
@@ -61,11 +63,27 @@ struct MarqueeTextInner: View {
                 textWidth = newWidth
                 updateAnimation()
             }
+            .onChange(of: isPlaying) { _ in
+                updateAnimation()
+            }
+            .onDisappear {
+                animationTask?.cancel()
+                animationTask = nil
+                isAnimating = false
+            }
     }
     
-    @State private var animationTask: Task<Void, Never>? = nil
-    
     private func updateAnimation() {
+        guard isPlaying else {
+            isAnimating = false
+            animationTask?.cancel()
+            animationTask = nil
+            withAnimation(nil) {
+                offset = 0
+            }
+            return
+        }
+        
         if textWidth > containerWidth + 0.5 && containerWidth > 0 {
             if !isAnimating {
                 isAnimating = true
@@ -99,6 +117,7 @@ struct MarqueeTextInner: View {
         } else {
             isAnimating = false
             animationTask?.cancel()
+            animationTask = nil
             withAnimation(nil) {
                 offset = 0
             }
@@ -119,5 +138,3 @@ struct ContainerWidthPreferenceKey: PreferenceKey {
         value = nextValue()
     }
 }
-
-

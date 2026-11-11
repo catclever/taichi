@@ -20,6 +20,17 @@ import Combine
 //    - Ensure `evaluateLyricTimer()` is invoked whenever playback status, pinned status, or detached status changes.
 // =========================================================================================
 
+// =========================================================================================
+// [FEATURE: Paused vs Stopped Playback Distinction]
+// 1. Paused:
+//    - `shouldShowLyrics` remains true (lyrics visible if pinned/supported).
+//    - Capsule dimensions remain expanded (`baseNotchWidth + 80` or pinned lyric height/width).
+//    - All animations stop (record stops spinning, waveform static, marquee stops scrolling, lyric timer freezes).
+// 2. Stopped:
+//    - Capsule collapses to base notch dimensions (`baseNotchWidth`, `baseNotchHeight`).
+//    - `shouldShowLyrics` returns false.
+// =========================================================================================
+
 struct IslandView: View {
     @ObservedObject var mediaObserver = MediaObserver.shared
     @ObservedObject var stateModel = IslandStateModel.shared
@@ -35,7 +46,7 @@ struct IslandView: View {
     @State private var localElapsedTime: Double = 0.0
     
     private var shouldShowLyrics: Bool {
-        guard mediaObserver.state.isPlaying else { return false }
+        guard mediaObserver.state.status != .stopped else { return false }
         
         let mediaApps = TaiChiSettings.shared.mediaApps
         let hasLyricApps = mediaApps.contains(where: { $0.isLyricSupported })
@@ -211,6 +222,10 @@ struct IslandView: View {
             updateStateDimensions()
             evaluateLyricTimer()
         }
+        .onChange(of: mediaObserver.state.status) { _ in
+            updateStateDimensions()
+            evaluateLyricTimer()
+        }
         .onChange(of: mediaObserver.state.elapsedTime) { newValue in
             localElapsedTime = newValue
         }
@@ -260,12 +275,14 @@ struct IslandView: View {
             
             switch stateModel.state {
             case .idle:
-                if stateModel.isLyricPinned && !stateModel.isLyricDetached && shouldShowLyrics {
+                if mediaObserver.state.status == .stopped {
+                    stateModel.capsuleWidth = baseNotchWidth
+                    stateModel.capsuleHeight = baseNotchHeight
+                } else if stateModel.isLyricPinned && !stateModel.isLyricDetached && shouldShowLyrics {
                     stateModel.capsuleWidth = hasPhysicalNotch ? (baseNotchWidth + 80) : (baseNotchWidth + (200 * notchScale))
                     stateModel.capsuleHeight = hasPhysicalNotch ? baseNotchHeight + (26 * notchScale) : baseNotchHeight
                 } else {
-                    let isPausedAndNotHovering = !mediaObserver.state.isPlaying && !stateModel.isHovering
-                    stateModel.capsuleWidth = isPausedAndNotHovering ? baseNotchWidth : baseNotchWidth + 80
+                    stateModel.capsuleWidth = baseNotchWidth + 80
                     stateModel.capsuleHeight = baseNotchHeight
                 }
             case .trackChanged:
@@ -339,30 +356,33 @@ struct IslandView: View {
     // MARK: - Views
     private var idleContent: some View {
         HStack {
-            if !mediaObserver.state.title.isEmpty {
+            if !mediaObserver.state.title.isEmpty && mediaObserver.state.status != .stopped {
                 // Left: Spinning Record
                 if let img = currentArtwork {
                     SpinningRecord(image: img, isPlaying: mediaObserver.state.isPlaying)
                         .frame(width: 26 * notchScale, height: 26 * notchScale)
                         .contentShape(Rectangle())
-                        .padding(.leading, 12 * notchScale)
-                        .onTapGesture {
-                            if stateModel.state == .expanded { return }
-                            if stateModel.state == .multiAppList {
-                                withAnimation {
-                                    stateModel.state = .idle
+                        .overlay(
+                            RecordClickOverlay(
+                                onLeftClick: {
+                                    if stateModel.state == .expanded { return }
+                                    if stateModel.state == .multiAppList {
+                                        withAnimation {
+                                            stateModel.state = .idle
+                                        }
+                                        return
+                                    }
+                                    mediaObserver.sendTargetedCommand(2)
+                                },
+                                onRightClick: {
+                                    mediaObserver.activateMediaApp()
                                 }
-                                return
-                            }
-                            
-                            let bundleId = mediaObserver.state.bundleIdentifier
-                            if !bundleId.isEmpty {
-                                mediaObserver.toggleApp(bundleId: bundleId)
-                            }
-                        }
+                            )
+                        )
+                        .padding(.leading, 12 * notchScale)
                 }
                 
-                if !hasPhysicalNotch && stateModel.isLyricPinned && !stateModel.isLyricDetached {
+                if !hasPhysicalNotch && stateModel.isLyricPinned && !stateModel.isLyricDetached && shouldShowLyrics {
                     lyricAndPlayButtonView
                         .contentShape(Rectangle())
                         .onTapGesture(count: 2) { cycleLyricScreen() }
@@ -390,15 +410,11 @@ struct IslandView: View {
                     WaveformView(color: waveformColor, notchScale: notchScale, isPlaying: mediaObserver.state.isPlaying)
                         .frame(width: 30 * notchScale, height: 16 * notchScale)
                 }
-                .frame(width: 30 * notchScale, height: 26 * notchScale)
+                .frame(width: 46 * notchScale, height: baseNotchHeight)
                 .contentShape(Rectangle())
-                .padding(.trailing, 12 * notchScale)
+                .padding(.trailing, 4 * notchScale)
                 .onTapGesture(count: 2) {
-                    let bundleId = mediaObserver.state.bundleIdentifier
-                    if !bundleId.isEmpty, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
-                        let config = NSWorkspace.OpenConfiguration()
-                        NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
-                    }
+                    mediaObserver.activateMediaApp()
                 }
                 .onTapGesture {
                     if stateModel.state == .expanded { return }
@@ -434,7 +450,7 @@ struct IslandView: View {
                     }
                 }
             } else {
-                // Not playing and no track: just empty spacer to keep the notch shape
+                // Not playing and no track / stopped: just empty spacer to keep the notch shape
                 Spacer()
             }
         }
@@ -479,14 +495,16 @@ struct IslandView: View {
                     text: "\(mediaObserver.state.title) - \(mediaObserver.state.artist)",
                     font: .system(size: 13 * notchScale, weight: .medium),
                     foregroundColor: .white,
-                    velocity: 30.0
+                    velocity: 30.0,
+                    isPlaying: mediaObserver.state.isPlaying
                 )
             } else {
                 MarqueeText(
                     text: lyrics[currentIndex].text,
                     font: .system(size: 13 * notchScale, weight: .bold),
                     foregroundColor: .white,
-                    velocity: 30.0
+                    velocity: 30.0,
+                    isPlaying: mediaObserver.state.isPlaying
                 )
             }
             

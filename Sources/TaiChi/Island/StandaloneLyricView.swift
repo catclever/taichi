@@ -17,6 +17,16 @@ import Combine
 //      `mediaObserver.state.elapsedTime`.
 // =========================================================================================
 
+// =========================================================================================
+// [FEATURE: Paused vs Stopped Lyric Visibility]
+// 1. Paused:
+//    - `shouldShowLyrics` remains true (lyrics visible if detached and pinned).
+//    - Display timer remains stopped (frozen at current elapsed time) while paused.
+//    - Marquee text scrolling is paused.
+// 2. Stopped:
+//    - `shouldShowLyrics` returns false, window fades out.
+// =========================================================================================
+
 struct StandaloneLyricView: View {
     @ObservedObject var stateModel = IslandStateModel.shared
     @ObservedObject var mediaObserver = MediaObserver.shared
@@ -50,7 +60,7 @@ struct StandaloneLyricView: View {
     }
 
     private var shouldShowLyrics: Bool {
-        guard mediaObserver.state.isPlaying else { return false }
+        guard mediaObserver.state.status != .stopped else { return false }
         
         let mediaApps = TaiChiSettings.shared.mediaApps
         let hasLyricApps = mediaApps.contains(where: { $0.isLyricSupported })
@@ -89,14 +99,16 @@ struct StandaloneLyricView: View {
                         text: "\(mediaObserver.state.title) - \(mediaObserver.state.artist)",
                         font: .system(size: 13 * notchScale, weight: .medium),
                         foregroundColor: .primary,
-                        velocity: 30.0
+                        velocity: 30.0,
+                        isPlaying: mediaObserver.state.isPlaying
                     )
                 } else {
                     MarqueeText(
                         text: lyrics[currentIndex].text,
                         font: .system(size: 13 * notchScale, weight: .bold),
                         foregroundColor: .primary,
-                        velocity: 30.0
+                        velocity: 30.0,
+                        isPlaying: mediaObserver.state.isPlaying
                     )
                 }
                 
@@ -119,6 +131,9 @@ struct StandaloneLyricView: View {
             localElapsedTime = newValue
         }
         .onChange(of: mediaObserver.state.isPlaying) { _ in
+            startTimer()
+        }
+        .onChange(of: mediaObserver.state.status) { _ in
             startTimer()
         }
         .onChange(of: shouldShowLyrics) { _ in

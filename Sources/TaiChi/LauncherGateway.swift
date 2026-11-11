@@ -582,8 +582,8 @@ public final class CyberLauncherHandler: @unchecked Sendable, LauncherModuleHand
                 
                 if isInjected {
                     subtitle = "⚡️ 已注入，回车直接激活窗口"
-                    if let app = runningApps.first(where: { $0.bundleIdentifier == appId }),
-                       let port = ServerManager.shared.getDebuggingPort(for: app.processIdentifier) {
+                    let app = runningApps.first(where: { $0.bundleIdentifier == appId })
+                    if let port = ServerManager.shared.resolveDebuggingPort(for: appId, runningApp: app) {
                         subtitle += " (Port: \(port))"
                     }
                     

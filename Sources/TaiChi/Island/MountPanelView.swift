@@ -47,7 +47,7 @@ struct MountTargetRow: View {
                 Text(target.id)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
-                Text(target.type.rawValue.uppercased())
+                Text(target.type.rawValue.uppercased() + (!target.isActive && target.state == .disconnected ? " · 暂停" : ""))
                     .font(.system(size: 10))
                     .foregroundColor(.gray)
             }

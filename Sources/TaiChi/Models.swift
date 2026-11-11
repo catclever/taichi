@@ -7,6 +7,26 @@ struct SMBMountConfig: Identifiable, Codable, Equatable {
     var id: String
     var remotePath: String
     var localPath: String
+    var isActive: Bool
+    
+    init(id: String, remotePath: String, localPath: String, isActive: Bool = true) {
+        self.id = id
+        self.remotePath = remotePath
+        self.localPath = localPath
+        self.isActive = isActive
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, remotePath, localPath, isActive
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        remotePath = try container.decode(String.self, forKey: .remotePath)
+        localPath = try container.decode(String.self, forKey: .localPath)
+        isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? true
+    }
 }
 
 // 数据模型

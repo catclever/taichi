@@ -5,7 +5,7 @@ import Combine
 // =========================================================================================
 // [BUG FIX: AppleScript Compilation Storm & Spurious MediaApp Published Updates]
 // 1. Problem:
-//    - `performPolling` previously re-created and re-compiled `NSAppleScript` strings every 2 seconds
+//    - `performPolling` previously re-created and re-compiled `NSAppleScript` strings every 30 seconds
 //      for every running media app. This dynamic compilation repeatedly triggered macOS OSA compilation
 //      and security scans (XProtect Remediator / YARA rules), causing periodic CPU spikes and battery drain.
 //    - `activeMediaApps` was assigned unconditionally on every poll cycle, triggering `@Published`
@@ -14,10 +14,35 @@ import Combine
 //    - Added a dedicated serial queue (`pollingQueue`) and an `NSAppleScript` cache (`compiledScripts: [String: NSAppleScript]`).
 //      Scripts are compiled once with `compileAndReturnError` and reused directly for subsequent executions.
 //    - Guarded `@Published` assignment with `if self.activeMediaApps != newActiveApps { self.activeMediaApps = newActiveApps }`.
+//    - Adjusted background poller interval to 30.0s to drastically reduce background wakeups.
 // 3. Caveats:
 //    - Restrict read/write access to `compiledScripts` to `pollingQueue` to guarantee thread safety.
 //    - If an app terminates or starts, cached script objects remain valid because they reference bundle IDs.
 // =========================================================================================
+
+// =========================================================================================
+// [FEATURE & POWER OPTIMIZATION: Media Playback Status & 10-Minute Pause Timeout]
+// 1. Problem:
+//    - Previously, media state was only binary (`isPlaying: Bool`). Pausing playback immediately
+//      shrank the island or treated paused and stopped states identically.
+//    - Paused state must preserve lyrics and expanded island, but avoid active display timers
+//      (record spin, waveform, marquee, lyric progress timer).
+// 2. Resolution:
+//    - Added `MediaPlaybackStatus` (`playing`, `paused`, `stopped`).
+//    - Synchronized `isPlaying = (status == .playing)`.
+//    - Paused state records `pausedTimestamp: Date` (wall-clock time) and schedules a 10-minute timer.
+//    - Listens to `NSWorkspace.didWakeNotification` to immediately check elapsed time across system sleep.
+//    - Transition to `.playing` immediately stops and resets the pause timer.
+//    - Timeout (>= 600s) or app termination transitions to `.stopped`, collapsing the island and hiding lyrics.
+//    - `MediaRemoteAdapter` (`parseJSON`) is the authoritative source for system-wide playback state;
+//      `performPolling` ONLY updates `activeMediaApps` and never overrides playback state.
+// =========================================================================================
+
+enum MediaPlaybackStatus: String, Equatable {
+    case playing
+    case paused
+    case stopped
+}
 
 struct ActiveMediaApp: Equatable, Identifiable {
     var id: String { bundleIdentifier }
@@ -31,6 +56,7 @@ struct ActiveMediaApp: Equatable, Identifiable {
 struct MediaState: Equatable {
     var title: String = ""
     var artist: String = ""
+    var status: MediaPlaybackStatus = .stopped
     var isPlaying: Bool = false
     var artworkData: Data? = nil
     var bundleIdentifier: String = ""
@@ -42,7 +68,7 @@ struct MediaState: Equatable {
     var isLiked: Bool? = nil
     
     var currentElapsedTime: Double {
-        guard duration > 0 else { return 0 }
+        guard duration > 0 else { return elapsedTime }
         if isPlaying {
             return min(duration, elapsedTime + Date().timeIntervalSince(lastElapsedTimeUpdate))
         } else {
@@ -61,12 +87,23 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
     private var buffer = Data()
     private var pollerTimer: Timer?
     
+    private var pauseTimeoutTimer: Timer?
+    private var pausedTimestamp: Date?
+    
     private let pollingQueue = DispatchQueue(label: "com.taichi.MediaObserver.pollingQueue")
     private var compiledScripts: [String: NSAppleScript] = [:]
     
     init() {
         startStreaming()
+        triggerOneShotPoll()
         startPoller()
+        
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
         
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] notification in
             guard let self = self,
@@ -78,8 +115,10 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                 print("ℹ️ [MediaObserver] Playing app \(bundleId) exited. Clearing media state.")
                 self.state.title = ""
                 self.state.artist = ""
+                self.state.status = .stopped
                 self.state.isPlaying = false
                 self.state.artworkData = nil
+                self.stopPauseTimer()
                 self.stopPoller()
                 LyricManager.shared.clearLyrics()
             }
@@ -87,13 +126,101 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
     }
     
     deinit {
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        stopPauseTimer()
         stopStreaming()
     }
     
+    private func resolveMediaRemoteDirectory() -> String? {
+        let fm = FileManager.default
+        var candidates: [String] = []
+        if let mainRes = Bundle.main.resourcePath {
+            candidates.append(mainRes + "/MediaRemoteAdapter")
+            candidates.append(mainRes + "/Resources/MediaRemoteAdapter")
+        }
+        if let modRes = Bundle.module.resourcePath {
+            candidates.append(modRes + "/MediaRemoteAdapter")
+            candidates.append(modRes + "/Resources/MediaRemoteAdapter")
+        }
+        for dir in candidates {
+            if fm.fileExists(atPath: dir + "/mediaremote-adapter.pl") {
+                return dir
+            }
+        }
+        print("⚠️ [MediaObserver] MediaRemoteAdapter directory not found in candidates: \(candidates)")
+        return nil
+    }
+    
+    func startPauseTimer() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.startPauseTimer()
+            }
+            return
+        }
+        
+        if pausedTimestamp == nil {
+            pausedTimestamp = Date()
+        }
+        pauseTimeoutTimer?.invalidate()
+        
+        let elapsed = Date().timeIntervalSince(pausedTimestamp ?? Date())
+        let remaining = max(0, 600 - elapsed)
+        
+        if remaining <= 0 {
+            self.state.status = .stopped
+            self.state.isPlaying = false
+            self.stopPauseTimer()
+            return
+        }
+        
+        pauseTimeoutTimer = Timer.scheduledTimer(withTimeInterval: remaining, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            print("⏱️ [MediaObserver] 10-minute pause timeout elapsed. Transitioning to .stopped.")
+            self.state.status = .stopped
+            self.state.isPlaying = false
+            self.stopPauseTimer()
+        }
+    }
+    
+    func stopPauseTimer() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.stopPauseTimer()
+            }
+            return
+        }
+        pauseTimeoutTimer?.invalidate()
+        pauseTimeoutTimer = nil
+        pausedTimestamp = nil
+    }
+    
+    @objc func handleSystemWake() {
+        print("🔔 [MediaObserver] System wake notification received.")
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.handleSystemWake()
+            }
+            return
+        }
+        
+        guard state.status == .paused, let timestamp = pausedTimestamp else { return }
+        let elapsed = Date().timeIntervalSince(timestamp)
+        if elapsed >= 600 {
+            print("⏱️ [MediaObserver] System woke after \(elapsed)s (>= 600s). Transitioning to .stopped.")
+            state.status = .stopped
+            state.isPlaying = false
+            stopPauseTimer()
+        } else {
+            print("⏱️ [MediaObserver] System woke after \(elapsed)s (< 600s). Resuming pause timer with \(600 - elapsed)s remaining.")
+            startPauseTimer()
+        }
+    }
+    
     private func startStreaming() {
-        guard let resourcePath = Bundle.module.resourcePath else { return }
-        let adapterPath = resourcePath + "/MediaRemoteAdapter/mediaremote-adapter.pl"
-        let frameworkPath = resourcePath + "/MediaRemoteAdapter/MediaRemoteAdapter.framework"
+        guard let adapterDir = resolveMediaRemoteDirectory() else { return }
+        let adapterPath = adapterDir + "/mediaremote-adapter.pl"
+        let frameworkPath = adapterDir + "/MediaRemoteAdapter.framework"
         
         process = Process()
         process?.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
@@ -120,10 +247,21 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         pipe?.fileHandleForReading.readabilityHandler = nil
     }
     
+    private func triggerOneShotPoll() {
+        Task { @MainActor in
+            let configuredApps = TaiChiSettings.shared.mediaApps
+            guard !configuredApps.isEmpty else { return }
+            self.pollingQueue.async { [weak self] in
+                self?.performPolling(configuredApps: configuredApps)
+            }
+        }
+    }
+    
     private func startPoller() {
         guard state.isPlaying else { return }
+        pollMediaApps()
         if pollerTimer == nil {
-            pollerTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            pollerTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
                 self?.pollMediaApps()
             }
         }
@@ -269,6 +407,9 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                     LyricManager.shared.fetchLyrics(title: newState.title, artist: newState.artist)
                 }
                 if let playing = payload.playing {
+                    if !playing && self.state.isPlaying {
+                        newState.elapsedTime = self.state.currentElapsedTime
+                    }
                     newState.isPlaying = playing
                     newState.lastElapsedTimeUpdate = Date() // Reset on play/pause too to keep it accurate
                 }
@@ -284,25 +425,46 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                 }
                 
                 if let rate = payload.playbackRate {
-                    newState.isPlaying = rate > 0
+                    if rate > 0 {
+                        newState.isPlaying = true
+                    } else if payload.playing == nil {
+                        if self.state.isPlaying {
+                            newState.elapsedTime = self.state.currentElapsedTime
+                        }
+                        newState.isPlaying = false
+                    }
                 }
                 
-                newState.debugInfo = "Stream [diff:\(message.diff ?? false)] - Playing: \(newState.isPlaying)"
+                // Update playback status and pause timer
+                if newState.isPlaying {
+                    newState.status = .playing
+                    self.stopPauseTimer()
+                } else {
+                    if !newState.title.isEmpty {
+                        newState.status = .paused
+                        self.startPauseTimer()
+                    } else {
+                        newState.status = .stopped
+                        self.stopPauseTimer()
+                    }
+                    newState.isPlaying = false
+                }
+                
+                newState.debugInfo = "Stream [diff:\(message.diff ?? false)] - Status: \(newState.status), Playing: \(newState.isPlaying)"
                 
                 self.state = newState
                 
                 if !wasPlaying && newState.isPlaying {
                     if self.pollerTimer == nil {
                         self.startPoller()
+                    } else {
+                        self.triggerOneShotPoll()
                     }
                 } else if wasPlaying && !newState.isPlaying {
-                    let configuredApps = TaiChiSettings.shared.mediaApps
-                    if !configuredApps.isEmpty {
-                        self.pollingQueue.async { [weak self] in
-                            self?.performPolling(configuredApps: configuredApps)
-                        }
-                    }
+                    self.triggerOneShotPoll()
                     self.stopPoller()
+                } else if self.activeMediaApps.isEmpty && (!newState.title.isEmpty || !newState.bundleIdentifier.isEmpty) {
+                    self.triggerOneShotPoll()
                 }
             }
         } catch {
@@ -311,20 +473,14 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
     }
 
     func sendCommand(_ commandId: Int, targetBundleId: String? = nil) {
-        guard let resourcePath = Bundle.main.resourcePath else { return }
+        guard let adapterDir = resolveMediaRemoteDirectory() else { return }
+        
+        let adapterPath = adapterDir + "/mediaremote-adapter.pl"
+        let frameworkPath = adapterDir + "/MediaRemoteAdapter.framework"
         
         let process = Process()
-        
-        if let targetBundleId = targetBundleId, !targetBundleId.isEmpty {
-            let mrTargetPath = resourcePath + "/MediaRemoteAdapter/mr_target"
-            process.executableURL = URL(fileURLWithPath: mrTargetPath)
-            process.arguments = ["\(commandId)", targetBundleId]
-        } else {
-            let adapterPath = resourcePath + "/MediaRemoteAdapter/mediaremote-adapter.pl"
-            let frameworkPath = resourcePath + "/MediaRemoteAdapter/MediaRemoteAdapter.framework"
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-            process.arguments = [adapterPath, frameworkPath, "send", "\(commandId)"]
-        }
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        process.arguments = [adapterPath, frameworkPath, "send", "\(commandId)"]
         
         do {
             try process.run()
@@ -334,7 +490,7 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
     }
     
     func toggleApp(bundleId: String) {
-        let supportedApps = ["com.apple.Music", "com.spotify.client", "com.netease.163music", "com.tencent.QQMusicMac"]
+        let supportedApps = ["com.apple.Music", "com.spotify.client"]
         if supportedApps.contains(bundleId) {
             let scriptSource = "tell application id \"\(bundleId)\" to playpause"
             if let script = NSAppleScript(source: scriptSource) {
@@ -356,9 +512,9 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
             return
         }
         
-        // 2. Fallback to global broadcast using hardware keys
-        print("ℹ️ [MediaObserver] toggleApp: Sending global broadcast command 2 via hardware key simulation")
-        simulateMediaKey(2)
+        // 2. Fallback to MediaRemote sendCommand
+        print("ℹ️ [MediaObserver] toggleApp: Sending MediaRemote command 2 to \(bundleId)")
+        sendCommand(2, targetBundleId: bundleId.isEmpty ? nil : bundleId)
     }
     
     private func simulateMediaKey(_ commandId: Int) {
@@ -388,18 +544,67 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func isPlaybackControlSupported() -> Bool {
-        let bundleId = state.bundleIdentifier
-        if bundleId.isEmpty { return false }
+    func activateMediaApp(bundleId: String? = nil) {
+        var targetBundleId = bundleId ?? state.bundleIdentifier
+        if targetBundleId.isEmpty {
+            targetBundleId = activeMediaApps.first?.bundleIdentifier ?? ""
+        }
+        if targetBundleId.isEmpty {
+            let candidateApps = ["com.netease.163music", "com.apple.Music", "com.spotify.client", "com.tencent.QQMusicMac"]
+            targetBundleId = NSWorkspace.shared.runningApplications.first(where: { app in
+                candidateApps.contains(app.bundleIdentifier ?? "")
+            })?.bundleIdentifier ?? ""
+        }
+        guard !targetBundleId.isEmpty else {
+            print("⚠️ [MediaObserver] activateMediaApp called but targetBundleId is empty")
+            return
+        }
+        print("🚀 [MediaObserver] Activating media app: \(targetBundleId)")
         
-        // 1. Check custom cyber media handler
-        if ServerManager.shared.getCyberMediaHandler(appId: bundleId, command: "playpause") != nil {
-            return true
+        // 1. Unhide if hidden
+        if let runningApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == targetBundleId }) {
+            runningApp.unhide()
         }
         
-        // 2. Built-in AppleScript supported apps
-        let supportedApps = ["com.apple.Music", "com.spotify.client"]
-        return supportedApps.contains(bundleId)
+        // 2. Try AppleScript activate (forces Space switching if window exists on another Space)
+        let scriptSource = "tell application id \"\(targetBundleId)\" to activate"
+        if let script = NSAppleScript(source: scriptSource) {
+            var errorInfo: NSDictionary?
+            script.executeAndReturnError(&errorInfo)
+            if errorInfo == nil {
+                print("✅ [MediaObserver] Activated \(targetBundleId) via AppleScript")
+            } else {
+                print("⚠️ [MediaObserver] AppleScript activate failed for \(targetBundleId): \(errorInfo?.description ?? "unknown error")")
+            }
+        }
+        
+        // 3. Always call NSWorkspace.openApplication as well (sends kAEReopenApplication to reopen closed main windows, e.g. Cmd+W in NetEase Music)
+        let resolvedBundleId = targetBundleId
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: resolvedBundleId) {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+                if let error = error {
+                    print("⚠️ [MediaObserver] NSWorkspace.openApplication failed for \(resolvedBundleId): \(error)")
+                } else {
+                    print("✅ [MediaObserver] NSWorkspace.openApplication succeeded for \(resolvedBundleId)")
+                }
+            }
+        } else if let runningApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == resolvedBundleId }) {
+            if #available(macOS 14.0, *) {
+                runningApp.activate(options: [.activateAllWindows])
+            } else {
+                runningApp.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+            }
+        }
+    }
+
+    func isPlaybackControlSupported() -> Bool {
+        // As long as there is an active media track, playing state, or bundle ID, playback control is supported
+        if !state.title.isEmpty || state.isPlaying || !state.bundleIdentifier.isEmpty || !activeMediaApps.isEmpty {
+            return true
+        }
+        return false
     }
 
     func sendTargetedCommand(_ commandId: Int) {
@@ -425,9 +630,9 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
             }
         }
         
-        let supportedApps = ["com.apple.Music", "com.spotify.client", "com.netease.163music", "com.tencent.QQMusicMac"]
+        let supportedApps = ["com.apple.Music", "com.spotify.client"]
         
-        // 2. If it's a supported app, try AppleScript first
+        // 2. If it's a supported AppleScript app, try AppleScript first
         if supportedApps.contains(bundleId) {
             let scriptCommand: String
             switch commandId {
@@ -446,21 +651,28 @@ class MediaObserver: ObservableObject, @unchecked Sendable {
                         print("✅ [MediaObserver] Successfully sent targeted command '\(scriptCommand)' to \(bundleId)")
                         return
                     } else {
-                        print("⚠️ [MediaObserver] Targeted AppleScript failed for \(bundleId): \(errorInfo?.description ?? "unknown error"). Falling back to global broadcast.")
+                        print("⚠️ [MediaObserver] Targeted AppleScript failed for \(bundleId): \(errorInfo?.description ?? "unknown error"). Falling back to MediaRemote.")
                     }
                 }
             }
         }
         
-        // 3. Fallback to global broadcast using hardware keys
+        // 3. Fallback to MediaRemote command directly (works reliably for NetEase Music, QQ Music, and any NowPlaying app)
+        if commandId == 2 || commandId == 4 || commandId == 5 {
+            print("ℹ️ [MediaObserver] Sending MediaRemote command \(commandId) to \(bundleId.isEmpty ? "global" : bundleId)")
+            sendCommand(commandId, targetBundleId: bundleId.isEmpty ? nil : bundleId)
+            return
+        }
+        
+        // 4. Fallback to global broadcast using hardware keys
         print("ℹ️ [MediaObserver] Sending global broadcast command \(commandId) via hardware key simulation")
         simulateMediaKey(commandId)
     }
     
     func seek(to time: Double) {
-        guard let resourcePath = Bundle.module.resourcePath else { return }
-        let adapterPath = resourcePath + "/MediaRemoteAdapter/mediaremote-adapter.pl"
-        let frameworkPath = resourcePath + "/MediaRemoteAdapter/MediaRemoteAdapter.framework"
+        guard let adapterDir = resolveMediaRemoteDirectory() else { return }
+        let adapterPath = adapterDir + "/mediaremote-adapter.pl"
+        let frameworkPath = adapterDir + "/MediaRemoteAdapter.framework"
         
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")

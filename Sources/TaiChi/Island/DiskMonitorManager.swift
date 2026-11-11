@@ -45,7 +45,7 @@ class DiskMonitorManager: ObservableObject {
         
         let mounts = TaiChiSettings.shared.activeSMBMounts
         for mount in mounts {
-            registerTarget(id: mount.id, localPath: mount.localPath, remotePath: mount.remotePath, type: .smb, isActive: true)
+            registerTarget(id: mount.id, localPath: mount.localPath, remotePath: mount.remotePath, type: .smb, isActive: mount.isActive)
         }
         
         checkExistingMounts()
@@ -92,6 +92,7 @@ class DiskMonitorManager: ObservableObject {
                 targets[i].retryCount = 0
             } else {
                 targets[i].state = .disconnected
+                targets[i].retryCount = 0
                 if targets[i].isActive && isNetworkAvailable {
                     scheduleRetry(for: targets[i].id)
                 }
@@ -222,6 +223,10 @@ class DiskMonitorManager: ObservableObject {
         if !isRetry {
             cancelRetry(id: id)
             manuallyDisconnectedIDs.remove(id)
+            targets[index].isActive = true
+            if let configIdx = TaiChiSettings.shared.activeSMBMounts.firstIndex(where: { $0.id == id }) {
+                TaiChiSettings.shared.activeSMBMounts[configIdx].isActive = true
+            }
         }
         
         if target.type == .rclone {
@@ -237,6 +242,36 @@ class DiskMonitorManager: ObservableObject {
             
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                
+                // Fast TCP port probe before executing heavy mount command (timeout 2.0s for resilience)
+                if let (host, port) = self.extractHostAndPort(from: remote) {
+                    let reachable = await self.isHostReachable(host: host, port: port, timeoutSeconds: 2.0)
+                    if !reachable {
+                        print("[DiskMonitor] SMB host \(host):\(port) is unreachable.")
+                        guard let currentIndex = self.targets.firstIndex(where: { $0.id == id }) else { return }
+                        
+                        if isRetry {
+                            self.targets[currentIndex].retryCount += 1
+                            if self.targets[currentIndex].retryCount < self.maxRetries {
+                                self.scheduleRetry(for: id)
+                            } else {
+                                print("[DiskMonitor] Max retries reached for \(id). Resetting to disconnected.")
+                                self.targets[currentIndex].state = .disconnected
+                                self.targets[currentIndex].retryCount = 0
+                                self.retryTasks.removeValue(forKey: id)
+                                IslandStateModel.shared.showNotification(text: "❌ \(id) 自动重试已暂停", mode: .disk)
+                            }
+                        } else {
+                            self.targets[currentIndex].state = .disconnected
+                            self.targets[currentIndex].retryCount = 0
+                            self.retryTasks[id]?.cancel()
+                            self.retryTasks.removeValue(forKey: id)
+                            IslandStateModel.shared.showNotification(text: "❌ \(id) 主机离线", mode: .disk)
+                        }
+                        return
+                    }
+                }
+                
                 print("[DiskMonitor] Mounting SMB volume: \(formattedURL) (isRetry: \(isRetry))")
                 let (success, errorMsg) = await self.mountSMBVolume(urlString: formattedURL)
                 
@@ -265,7 +300,7 @@ class DiskMonitorManager: ObservableObject {
                             self.targets[currentIndex].state = .disconnected
                             self.targets[currentIndex].retryCount = 0
                             self.retryTasks.removeValue(forKey: id)
-                            IslandStateModel.shared.showNotification(text: "❌ \(id) 自动重试失败", mode: .disk)
+                            IslandStateModel.shared.showNotification(text: "❌ \(id) 自动重试已暂停", mode: .disk)
                         }
                     } else {
                         self.targets[currentIndex].state = .disconnected
@@ -282,10 +317,14 @@ class DiskMonitorManager: ObservableObject {
         retryTasks.removeValue(forKey: id)
         if let index = targets.firstIndex(where: { $0.id == id }) {
             targets[index].retryCount = 0
+            targets[index].isActive = false
             if targets[index].state == .retrying {
                 targets[index].state = .disconnected
             }
-            print("[DiskMonitor] Cancelled retry for \(id)")
+            if let configIdx = TaiChiSettings.shared.activeSMBMounts.firstIndex(where: { $0.id == id }) {
+                TaiChiSettings.shared.activeSMBMounts[configIdx].isActive = false
+            }
+            print("[DiskMonitor] Cancelled retry for \(id), set isActive = false")
         }
     }
     
@@ -301,6 +340,12 @@ class DiskMonitorManager: ObservableObject {
         let target = targets[index]
         manuallyDisconnectedIDs.insert(id)
         
+        targets[index].isActive = false
+        targets[index].retryCount = 0
+        if let configIdx = TaiChiSettings.shared.activeSMBMounts.firstIndex(where: { $0.id == id }) {
+            TaiChiSettings.shared.activeSMBMounts[configIdx].isActive = false
+        }
+        
         if target.type == .rclone {
             // For rclone, use external script
             runProcess(executable: "/bin/bash", arguments: ["-c", "/Users/kael/Library/Services/alist/stop_mount.sh \(target.id)"])
@@ -308,12 +353,79 @@ class DiskMonitorManager: ObservableObject {
             // For SMB or general
             runProcess(executable: "/usr/sbin/diskutil", arguments: ["unmount", "force", target.localPath])
         }
-        
-        // Reset retry count on manual disconnect
-        targets[index].retryCount = 0
     }
     
     // MARK: - Internal Helpers
+    
+    private func extractHostAndPort(from remotePath: String) -> (host: String, port: UInt16)? {
+        let trimmed = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let formatted = formatSMBURL(trimmed)
+        if let url = URL(string: formatted), let host = url.host, !host.isEmpty {
+            let port = UInt16(url.port ?? 445)
+            return (host, port)
+        }
+        
+        var stripped = trimmed
+        if stripped.hasPrefix("smb://") {
+            stripped = String(stripped.dropFirst(6))
+        } else if stripped.hasPrefix("//") {
+            stripped = String(stripped.dropFirst(2))
+        }
+        if let atIndex = stripped.firstIndex(of: "@") {
+            stripped = String(stripped[stripped.index(after: atIndex)...])
+        }
+        let hostPart = stripped.components(separatedBy: "/").first?.components(separatedBy: ":").first
+        if let host = hostPart, !host.isEmpty {
+            return (host, 445)
+        }
+        return nil
+    }
+
+    private func isHostReachable(host: String, port: UInt16 = 445, timeoutSeconds: Double = 2.0) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            var hints = addrinfo()
+            hints.ai_family = AF_UNSPEC
+            hints.ai_socktype = SOCK_STREAM
+            hints.ai_protocol = IPPROTO_TCP
+            
+            var servinfo: UnsafeMutablePointer<addrinfo>?
+            guard getaddrinfo(host, String(port), &hints, &servinfo) == 0, let info = servinfo else {
+                return false
+            }
+            defer { freeaddrinfo(servinfo) }
+            
+            var p: UnsafeMutablePointer<addrinfo>? = info
+            while let current = p {
+                let sock = socket(current.pointee.ai_family, current.pointee.ai_socktype, current.pointee.ai_protocol)
+                if sock >= 0 {
+                    let flags = fcntl(sock, F_GETFL, 0)
+                    _ = fcntl(sock, F_SETFL, flags | O_NONBLOCK)
+                    
+                    let ret = Darwin.connect(sock, current.pointee.ai_addr, current.pointee.ai_addrlen)
+                    if ret == 0 {
+                        close(sock)
+                        return true
+                    }
+                    
+                    if errno == EINPROGRESS {
+                        var pfd = pollfd(fd: sock, events: Int16(POLLOUT), revents: 0)
+                        let pollRes = poll(&pfd, 1, Int32(timeoutSeconds * 1000))
+                        if pollRes > 0 && (pfd.revents & Int16(POLLOUT)) != 0 {
+                            var err: Int32 = 0
+                            var len = socklen_t(MemoryLayout<Int32>.size)
+                            if getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &len) == 0 && err == 0 {
+                                close(sock)
+                                return true
+                            }
+                        }
+                    }
+                    close(sock)
+                }
+                p = current.pointee.ai_next
+            }
+            return false
+        }.value
+    }
     
     private func formatSMBURL(_ remotePath: String) -> String {
         let trimmed = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -334,7 +446,9 @@ class DiskMonitorManager: ObservableObject {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             let escapedUrl = urlString.replacingOccurrences(of: "\\", with: "\\\\")
                                       .replacingOccurrences(of: "\"", with: "\\\"")
-            process.arguments = ["-e", "mount volume \"\(escapedUrl)\""]
+            // Wrap in try...on error to suppress macOS NetFS GUI alert dialog!
+            let script = "try\nmount volume \"\(escapedUrl)\"\non error errMsg number errNum\nerror errMsg number errNum\nend try"
+            process.arguments = ["-e", script]
             let errorPipe = Pipe()
             process.standardError = errorPipe
             let outPipe = Pipe()
@@ -401,14 +515,22 @@ class DiskMonitorManager: ObservableObject {
             targets[index].retryCount = 0
             retryTasks[targetId]?.cancel()
             retryTasks.removeValue(forKey: targetId)
-            IslandStateModel.shared.showNotification(text: "⚠️ \(targets[index].id) 已断开", mode: .disk)
             
-            // Trigger retry logic if it's an active SMB mount and network is available, and was not manually disconnected
             if manuallyDisconnectedIDs.contains(targetId) {
                 manuallyDisconnectedIDs.remove(targetId)
-                print("[DiskMonitor] Target \(targetId) was manually disconnected, skipping auto-retry.")
-            } else if targets[index].isActive && isNetworkAvailable {
-                scheduleRetry(for: targetId)
+                targets[index].isActive = false
+                if let configIdx = TaiChiSettings.shared.activeSMBMounts.firstIndex(where: { $0.id == targetId }) {
+                    TaiChiSettings.shared.activeSMBMounts[configIdx].isActive = false
+                }
+                print("[DiskMonitor] Target \(targetId) was manually disconnected.")
+                IslandStateModel.shared.showNotification(text: "⚠️ \(targets[index].id) 已卸载", mode: .disk)
+            } else {
+                print("[DiskMonitor] Target \(targetId) unmounted. Preserving isActive=\(targets[index].isActive).")
+                IslandStateModel.shared.showNotification(text: "⚠️ \(targets[index].id) 已断开", mode: .disk)
+                
+                if targets[index].isActive && isNetworkAvailable {
+                    scheduleRetry(for: targetId)
+                }
             }
         }
     }
@@ -417,7 +539,19 @@ class DiskMonitorManager: ObservableObject {
         // Find all active targets that are disconnected and try to reconnect them
         for target in targets where target.isActive {
             if target.state == .disconnected {
-                scheduleRetry(for: target.id)
+                if target.type == .smb, let remote = target.remotePath, let (host, port) = extractHostAndPort(from: remote) {
+                    Task { @MainActor [weak self] in
+                        guard let self = self else { return }
+                        let reachable = await self.isHostReachable(host: host, port: port, timeoutSeconds: 2.0)
+                        if reachable {
+                            self.scheduleRetry(for: target.id)
+                        } else {
+                            print("[DiskMonitor] triggerAutoReconnect: \(target.id) host \(host):\(port) offline. Skipping retry.")
+                        }
+                    }
+                } else {
+                    scheduleRetry(for: target.id)
+                }
             } else if target.state == .retrying && retryTasks[target.id] == nil {
                 // If it was in retrying state but had no active retry task, restart retry
                 scheduleRetry(for: target.id)
@@ -432,7 +566,7 @@ class DiskMonitorManager: ObservableObject {
         
         // Max retries
         if targets[index].retryCount >= maxRetries {
-            print("[DiskMonitor] Max retries reached for \(id). Waiting for manual intervention.")
+            print("[DiskMonitor] Max retries reached for \(id). Pausing until network changes or manual retry.")
             targets[index].state = .disconnected
             targets[index].retryCount = 0
             retryTasks.removeValue(forKey: id)

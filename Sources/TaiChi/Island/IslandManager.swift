@@ -40,7 +40,6 @@ public class IslandManager: NSObject, NSWindowDelegate {
     private var hoverTimer: Timer?
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
-    private var pausedStartTime: Date?
     private var lastIsVisibleDueToApps: Bool = true
     
     private var lastHoverCheckTime: TimeInterval = 0
@@ -130,6 +129,24 @@ public class IslandManager: NSObject, NSWindowDelegate {
             .store(in: &cancellables)
             
         IslandStateModel.shared.$state
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.positionWindow()
+            }
+            .store(in: &cancellables)
+            
+        MediaObserver.shared.$state
+            .map { "\($0.status.rawValue)|\($0.title.isEmpty)" }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.positionWindow()
+            }
+            .store(in: &cancellables)
+            
+        MediaObserver.shared.$activeMediaApps
+            .map { $0.isEmpty }
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.positionWindow()
@@ -259,23 +276,11 @@ public class IslandManager: NSObject, NSWindowDelegate {
     }
     
     private func isIslandVisibleDueToApps() -> Bool {
-        let hasActiveApps = !MediaObserver.shared.activeMediaApps.isEmpty
-        let isPlaying = MediaObserver.shared.state.isPlaying
-        
-        if isPlaying || !hasActiveApps {
-            pausedStartTime = nil
-            return hasActiveApps
-        }
-        
-        if pausedStartTime == nil {
-            pausedStartTime = Date()
-        }
-        
-        if let startTime = pausedStartTime, Date().timeIntervalSince(startTime) > 600 { // 10 minutes
+        let state = MediaObserver.shared.state
+        if state.status == .stopped {
             return false
         }
-        
-        return true
+        return !state.title.isEmpty || state.isPlaying || !MediaObserver.shared.activeMediaApps.isEmpty
     }
     
     private func checkMouseHover() {

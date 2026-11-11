@@ -12,8 +12,10 @@ private class SyncBox<T>: @unchecked Sendable {
     init(_ value: T) { self.value = value }
 }
 
-class ServerManager: @unchecked Sendable {
-    static let shared = ServerManager()
+public class ServerManager: ObservableObject, @unchecked Sendable {
+    public static let shared = ServerManager()
+    
+    @Published public var isRestarting: Bool = false
     
     private let server = HttpServer()
     private var stateCache: [String: String] = [:]
@@ -30,6 +32,11 @@ class ServerManager: @unchecked Sendable {
     public internal(set) var workerPort: Int?
     private var wakeObserver: NSObjectProtocol?
     private var cyberMediaHandlers: [String: [String: String]] = [:]
+    
+    private let workerQueue = DispatchQueue(label: "com.taichi.workerQueue", qos: .userInitiated)
+    private var workerRetryCount: Int = 0
+    private let maxWorkerRetries: Int = 3
+    private var workerRestartWorkItem: DispatchWorkItem?
 
     
     private init() {
@@ -90,155 +97,213 @@ class ServerManager: @unchecked Sendable {
             // 故意保留 stateCache 不清空，以便长线持久化状态不受网关重启影响
             
             print("🛑 TaiChi Gateway stopped")
+        } else {
+            stopWorker()
         }
     }
     
+    // =========================================================================================
+    // [BUG FIX: Gateway Restart UI Freeze & Async State Management]
+    // 1. Problem:
+    //    Previously, restarting the gateway froze the main UI thread because:
+    //    a) `pkill` and worker initialization ran synchronously on MainActor with `semaphore.wait(5.0)`.
+    //    b) Hammerspoon AppleScript execution ran synchronously on MainActor.
+    //    c) The restart button had no busy/disabled state, allowing repeated clicks while restarting.
+    // 2. Resolution:
+    //    - Conformed `ServerManager` to `ObservableObject, @unchecked Sendable` and exposed `@Published public var isRestarting: Bool = false`.
+    //    - When `restart()` is invoked on MainActor, `isRestarting` is immediately set to true.
+    //    - Asynchronously stops gateway, terminates worker, waits 0.5s cooldown to release ports, and restarts gateway.
+    //    - Once restart completes (or fails), `isRestarting` is guaranteed to reset to false on MainActor.
+    // 3. Caveats:
+    //    - Duplicate clicks while `isRestarting == true` are guarded and ignored.
+    // =========================================================================================
     @MainActor
     func restart() {
+        guard !isRestarting else {
+            print("⚠️ [ServerManager] Gateway restart already in progress, ignoring duplicate call.")
+            return
+        }
         print("🔄 Restarting TaiChi Gateway...")
+        isRestarting = true
+        
         stop()
         
         // Small delay to ensure port is freed
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
             self.start()
+            self.isRestarting = false
             print("✅ TaiChi Gateway restarted and cache cleared")
         }
     }
     
     // =========================================================================================
-    // [BUG FIX: Node Worker Orphan Process Leaks & Auto-Termination via Pipe Closure]
+    // [BUG FIX: Node Worker Non-Blocking Launch & Auto-Restart Debounce Loop Protection]
     // 1. Problem:
-    //    When TaiChi terminates abruptly, restarts the gateway, or crashes, previously spawned
-    //    Node `.taichi_worker.js` processes could be orphaned and continue running indefinitely,
-    //    wasting CPU, memory, and leaking network ports.
+    //    - `cleanup.waitUntilExit()` for `pkill` and `semaphore.wait(timeout: 5.0)` were blocking
+    //      the MainActor UI thread during worker launch and gateway restart.
+    //    - In `terminationHandler`, `startWorker()` was immediately re-invoked on every process exit
+    //      without backoff, causing an infinite tight loop that completely froze the app if worker failed.
     // 2. Resolution:
-    //    - Added `process.stdin.resume(); process.stdin.on('end', () => process.exit(0));` to the
-    //      generated `.taichi_worker.js` and attached a standardInput Pipe in Swift. When the parent
-    //      terminates or crashes, the OS closes the pipe, sending EOF to stdin so Node auto-exits.
-    //    - In `startWorker()`, explicitly terminate any active `workerProcess` instance and execute
-    //      `/usr/bin/pkill -f ".taichi_worker.js"` to terminate any preexisting orphan worker instances
-    //      prior to spawning the new one.
+    //    - Offloaded `pkill` and worker process execution to a dedicated background `workerQueue`.
+    //    - Removed `semaphore.wait(...)`. The worker port is captured asynchronously when the worker
+    //      outputs `READY:<port>` via `readabilityHandler`.
+    //    - Added retry counter `workerRetryCount` (max 3 attempts) and 3.0s backoff delay via
+    //      `workerRestartWorkItem` to prevent tight crash loops.
+    //    - Reset `workerRetryCount` upon receiving `READY:<port>`.
     // 3. Caveats:
-    //    - The `pkill` command returns status 1 if no process matched; this should not be treated as a failure.
+    //    - When stopping worker intentionally via `stopWorker()`, pending restart items are cancelled
+    //      and existing process termination handler is cleared to avoid spurious restart triggers.
     // =========================================================================================
     @MainActor
     private func startWorker() {
-        let scriptsDir = (TaiChiSettings.shared.scriptsPath as NSString).expandingTildeInPath
-        let workerScriptPath = (scriptsDir as NSString).appendingPathComponent(".taichi_worker.js")
+        // Cancel any pending auto-restart work item
+        workerRestartWorkItem?.cancel()
+        workerRestartWorkItem = nil
         
         // Terminate any existing worker held by this manager
         if let existing = self.workerProcess, existing.isRunning {
+            existing.terminationHandler = nil
             existing.terminate()
             self.workerProcess = nil
         }
+        self.workerPort = nil
         
-        // Terminate any leftover orphaned worker processes
-        let cleanup = Foundation.Process()
-        cleanup.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        cleanup.arguments = ["-f", ".taichi_worker.js"]
-        try? cleanup.run()
-        cleanup.waitUntilExit()
+        let scriptsDir = (TaiChiSettings.shared.scriptsPath as NSString).expandingTildeInPath
+        let workerScriptPath = (scriptsDir as NSString).appendingPathComponent(".taichi_worker.js")
         
-        let workerCode = """
-        const http = require('http');
-        const url = require('url');
-        const fs = require('fs');
-        const path = require('path');
-        const SCRIPTS_DIR = process.argv[2] || __dirname;
+        workerQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Terminate any leftover orphaned worker processes asynchronously
+            let cleanup = Foundation.Process()
+            cleanup.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+            cleanup.arguments = ["-f", ".taichi_worker.js"]
+            try? cleanup.run()
+            cleanup.waitUntilExit() // Safe on background workerQueue
+            
+            let workerCode = """
+            const http = require('http');
+            const url = require('url');
+            const fs = require('fs');
+            const path = require('path');
+            const SCRIPTS_DIR = process.argv[2] || __dirname;
 
-        // Auto-terminate when parent process dies or pipe closes
-        process.stdin.resume();
-        process.stdin.on('end', () => process.exit(0));
+            // Auto-terminate when parent process dies or pipe closes
+            process.stdin.resume();
+            process.stdin.on('end', () => process.exit(0));
 
-        const server = http.createServer(async (req, res) => {
-            const parsedUrl = url.parse(req.url, true);
-            if (!parsedUrl.pathname.startsWith('/script/')) {
-                res.writeHead(404); return res.end('Not found');
-            }
-            const scriptName = parsedUrl.pathname.replace('/script/', '');
-            let scriptPath = path.join(SCRIPTS_DIR, scriptName + '.js');
-            if (!fs.existsSync(scriptPath)) {
-                res.writeHead(404, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify({ error: `Script not found: ${scriptName}` }));
-            }
-            try {
-                if (parsedUrl.query.nocache) {
-                    delete require.cache[require.resolve(scriptPath)];
+            const server = http.createServer(async (req, res) => {
+                const parsedUrl = url.parse(req.url, true);
+                if (!parsedUrl.pathname.startsWith('/script/')) {
+                    res.writeHead(404); return res.end('Not found');
                 }
-                const scriptModule = require(scriptPath);
-                let result;
-                if (typeof scriptModule === 'function') {
-                    result = await scriptModule(parsedUrl.query);
-                } else {
-                    result = scriptModule;
+                const scriptName = parsedUrl.pathname.replace('/script/', '');
+                let scriptPath = path.join(SCRIPTS_DIR, scriptName + '.js');
+                if (!fs.existsSync(scriptPath)) {
+                    res.writeHead(404, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: `Script not found: ${scriptName}` }));
                 }
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify(result));
-            } catch (e) {
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: "Script execution failed", details: e.message, stack: e.stack }));
-            }
-        });
-        server.listen(0, '127.0.0.1', () => {
-            console.log(`READY:${server.address().port}`);
-        });
-        """
-        
-        try? workerCode.write(toFile: workerScriptPath, atomically: true, encoding: .utf8)
-        
-        let process = Foundation.Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-l", "-c", "exec node \"\(workerScriptPath)\" \"\(scriptsDir)\""]
-        
-        let inPipe = Pipe()
-        process.standardInput = inPipe
-        
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        
-        let semaphore = DispatchSemaphore(value: 0)
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if data.isEmpty { return }
-            if let str = String(data: data, encoding: .utf8) {
-                let lines = str.components(separatedBy: .newlines)
-                for line in lines {
-                    if line.hasPrefix("READY:") {
-                        if let portStr = line.components(separatedBy: ":").last, let port = Int(portStr) {
-                            self?.workerPort = port
-                            print("🔥 Node Worker ready on port \(port)")
-                            semaphore.signal()
+                try {
+                    if (parsedUrl.query.nocache) {
+                        delete require.cache[require.resolve(scriptPath)];
+                    }
+                    const scriptModule = require(scriptPath);
+                    let result;
+                    if (typeof scriptModule === 'function') {
+                        result = await scriptModule(parsedUrl.query);
+                    } else {
+                        result = scriptModule;
+                    }
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify(result));
+                } catch (e) {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: "Script execution failed", details: e.message, stack: e.stack }));
+                }
+            });
+            server.listen(0, '127.0.0.1', () => {
+                console.log(`READY:${server.address().port}`);
+            });
+            """
+            
+            try? workerCode.write(toFile: workerScriptPath, atomically: true, encoding: .utf8)
+            
+            let process = Foundation.Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = ["-l", "-c", "exec node \"\(workerScriptPath)\" \"\(scriptsDir)\""]
+            
+            let inPipe = Pipe()
+            process.standardInput = inPipe
+            
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            
+            pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                let data = handle.availableData
+                if data.isEmpty { return }
+                if let str = String(data: data, encoding: .utf8) {
+                    let lines = str.components(separatedBy: .newlines)
+                    for line in lines {
+                        if line.hasPrefix("READY:") {
+                            if let portStr = line.components(separatedBy: ":").last, let port = Int(portStr) {
+                                DispatchQueue.main.async {
+                                    self?.workerPort = port
+                                    self?.workerRetryCount = 0
+                                }
+                                print("🔥 Node Worker ready on port \(port)")
+                            }
+                        } else if !line.isEmpty {
+                            print("[Worker] \(line)")
                         }
-                    } else if !line.isEmpty {
-                        print("[Worker] \(line)")
                     }
                 }
             }
-        }
-        
-        process.terminationHandler = { [weak self] process in
-            print("⚠️ Node Worker terminated unexpectedly with status \(process.terminationStatus)")
-            DispatchQueue.main.async {
-                // Check if this is still the active process before restarting
-                if self?.workerProcess == process {
-                    self?.workerPort = nil
-                    print("🔄 Auto-restarting Node Worker...")
-                    self?.startWorker()
+            
+            process.terminationHandler = { [weak self] proc in
+                print("⚠️ Node Worker terminated with status \(proc.terminationStatus)")
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    // Check if this is still the active process before auto-restarting
+                    guard self.workerProcess === proc else { return }
+                    self.workerPort = nil
+                    self.workerProcess = nil
+                    
+                    if self.workerRetryCount < self.maxWorkerRetries {
+                        self.workerRetryCount += 1
+                        let delay: Double = 3.0
+                        print("🔄 Auto-restarting Node Worker (attempt \(self.workerRetryCount)/\(self.maxWorkerRetries)) in \(delay)s...")
+                        let workItem = DispatchWorkItem { [weak self] in
+                            self?.startWorker()
+                        }
+                        self.workerRestartWorkItem = workItem
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+                    } else {
+                        print("❌ Node Worker reached maximum restart attempts (\(self.maxWorkerRetries)). Stopping auto-restart.")
+                    }
                 }
             }
-        }
-        
-        do {
-            try process.run()
-            self.workerProcess = process
-            _ = semaphore.wait(timeout: .now() + 5.0)
-        } catch {
-            print("Failed to start Node worker: \(error)")
+            
+            do {
+                try process.run()
+                DispatchQueue.main.async {
+                    self.workerProcess = process
+                }
+            } catch {
+                print("Failed to start Node worker: \(error)")
+            }
         }
     }
     
     private func stopWorker() {
-        workerProcess?.terminate()
+        workerRestartWorkItem?.cancel()
+        workerRestartWorkItem = nil
+        workerRetryCount = 0
+        
+        if let proc = workerProcess, proc.isRunning {
+            proc.terminationHandler = nil
+            proc.terminate()
+        }
         workerProcess = nil
         workerPort = nil
     }
@@ -274,8 +339,7 @@ class ServerManager: @unchecked Sendable {
             
             DispatchQueue.global(qos: .background).async {
                 if let app = runningApps.first(where: { $0.bundleIdentifier == appId }),
-                   let portStr = self.getDebuggingPort(for: app.processIdentifier),
-                   let targetPort = Int(portStr) {
+                   let targetPort = self.resolveDebuggingPort(for: appId, runningApp: app) {
                     
                     print("🔄 Manual re-invoking worker for \(appId) on port \(targetPort)...")
                     var components = URLComponents()
@@ -312,8 +376,7 @@ class ServerManager: @unchecked Sendable {
                 for monitoredApp in activeApps {
                     let finalAppId = monitoredApp.id
                     if let app = runningApps.first(where: { $0.bundleIdentifier == finalAppId }),
-                       let portStr = self.getDebuggingPort(for: app.processIdentifier),
-                       let targetPort = Int(portStr) {
+                       let targetPort = self.resolveDebuggingPort(for: finalAppId, runningApp: app) {
                         
                         print("🔄 Re-invoking worker for \(finalAppId) on port \(targetPort)...")
                         var components = URLComponents()
@@ -723,8 +786,17 @@ class ServerManager: @unchecked Sendable {
             return jsonResponse(["error": "Forbidden"], statusCode: 403)
         }
         
-        let scriptsDir = DispatchQueue.main.sync {
-            (TaiChiSettings.shared.scriptsPath as NSString).expandingTildeInPath
+        let scriptsDir: String
+        if Thread.isMainThread {
+            scriptsDir = MainActor.assumeIsolated {
+                (TaiChiSettings.shared.scriptsPath as NSString).expandingTildeInPath
+            }
+        } else {
+            scriptsDir = DispatchQueue.main.sync {
+                MainActor.assumeIsolated {
+                    (TaiChiSettings.shared.scriptsPath as NSString).expandingTildeInPath
+                }
+            }
         }
         
         let fileURL = URL(fileURLWithPath: scriptsDir).appendingPathComponent(subpath)
@@ -992,6 +1064,76 @@ class ServerManager: @unchecked Sendable {
         return nil
     }
     
+    // MARK: - Debugging Port Resolution
+    
+    /// 统一解析应用调试端口（优先使用 activeInjectedApps 中记录的端口，降级使用 ps 反查进程参数）
+    func resolveDebuggingPort(for appId: String, runningApp: NSRunningApplication? = nil) -> Int? {
+        let activeApps: [MonitoredApp]
+        if Thread.isMainThread {
+            activeApps = MainActor.assumeIsolated {
+                TaiChiSettings.shared.activeInjectedApps
+            }
+        } else {
+            activeApps = DispatchQueue.main.sync {
+                MainActor.assumeIsolated {
+                    TaiChiSettings.shared.activeInjectedApps
+                }
+            }
+        }
+        
+        // 1. 优先读取已注入并持久化记录的端口
+        if let recordedPort = activeApps.first(where: { $0.id == appId })?.port {
+            return recordedPort
+        }
+        
+        // 2. 回退通过 NSRunningApplication 进程命令行通过 ps 反查
+        let app = runningApp ?? NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == appId })
+        if let pid = app?.processIdentifier,
+           let portStr = getDebuggingPort(for: pid),
+           let port = Int(portStr) {
+            return port
+        }
+        
+        return nil
+    }
+    
+    /// 从 CDP 返回的 targets 列表中选出最匹配的有效前台页面 Target（针对 Antigravity 等多 Target 应用优化）
+    func findBestPageTarget(in jsonArray: [[String: Any]], appId: String? = nil) -> [String: Any]? {
+        let pageTargets = jsonArray.filter { target in
+            guard (target["type"] as? String) == "page",
+                  let wsUrl = target["webSocketDebuggerUrl"] as? String, !wsUrl.isEmpty else {
+                return false
+            }
+            let url = (target["url"] as? String) ?? ""
+            // 过滤 devtools 与 data: 等离屏空白靶点
+            if url.hasPrefix("devtools://") || url.hasPrefix("data:") {
+                return false
+            }
+            return true
+        }
+        
+        if pageTargets.isEmpty {
+            // 降级：如果过滤后为空，回退到任何包含 webSocketDebuggerUrl 的 page
+            return jsonArray.first(where: {
+                ($0["type"] as? String) == "page" && ($0["webSocketDebuggerUrl"] as? String) != nil
+            })
+        }
+        
+        // 针对特定应用（如 Antigravity）优先匹配包含特征关键词或本地工作区 URL 的前台会话窗口
+        if appId == "com.google.antigravity" || appId == nil {
+            if let matched = pageTargets.first(where: { target in
+                let title = ((target["title"] as? String) ?? "").lowercased()
+                let url = ((target["url"] as? String) ?? "").lowercased()
+                return title.contains("antigravity") || url.contains("127.0.0.1") || url.contains("localhost")
+            }) {
+                return matched
+            }
+        }
+        
+        // 默认返回第一个非空的有效页面 target
+        return pageTargets.first
+    }
+    
     private func handleHSEventRequest(_ request: HttpRequest) -> HttpResponse {
         let bodyBytes = request.body
         let data = Data(bodyBytes)
@@ -1100,19 +1242,27 @@ class ServerManager: @unchecked Sendable {
             return jsonResponse(["error": "Missing appId parameter"], statusCode: 400)
         }
         
-        let activeInjectedAppIDs = DispatchQueue.main.sync {
-            TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+        let activeInjectedAppIDs: [String]
+        if Thread.isMainThread {
+            activeInjectedAppIDs = MainActor.assumeIsolated {
+                TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+            }
+        } else {
+            activeInjectedAppIDs = DispatchQueue.main.sync {
+                MainActor.assumeIsolated {
+                    TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+                }
+            }
         }
         
         guard activeInjectedAppIDs.contains(appId) else {
             return jsonResponse(["error": "App is not injected"], statusCode: 400)
         }
         
-        // Find debugging port
+        // Find debugging port (优先读取 activeInjectedApps 已记录端口，降级 ps 反查)
         let runningApps = NSWorkspace.shared.runningApplications
         guard let app = runningApps.first(where: { $0.bundleIdentifier == appId }),
-              let portStr = getDebuggingPort(for: app.processIdentifier),
-              let port = Int(portStr) else {
+              let port = resolveDebuggingPort(for: appId, runningApp: app) else {
             return jsonResponse(["error": "Cannot find debugging port"], statusCode: 500)
         }
         
@@ -1121,12 +1271,13 @@ class ServerManager: @unchecked Sendable {
         let semaphore = DispatchSemaphore(value: 0)
         var wsUrlStr: String? = nil
         
-        URLSession.shared.dataTask(with: url) { data, response, error in
+        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
             defer { semaphore.signal() }
-            guard let data = data,
+            guard let self = self,
+                  let data = data,
                   let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-                  let firstTarget = jsonArray.first(where: { ($0["type"] as? String) == "page" }),
-                  let wsUrl = firstTarget["webSocketDebuggerUrl"] as? String else {
+                  let bestTarget = self.findBestPageTarget(in: jsonArray, appId: appId),
+                  let wsUrl = bestTarget["webSocketDebuggerUrl"] as? String else {
                 return
             }
             wsUrlStr = wsUrl
@@ -1150,7 +1301,7 @@ class ServerManager: @unchecked Sendable {
                 const overlay = document.createElement('div');
                 overlay.style.position = 'fixed';
                 overlay.style.pointerEvents = 'none';
-                overlay.style.zIndex = '9999999';
+                overlay.style.zIndex = '2147483647';
                 overlay.style.border = '2px dashed #3186FF';
                 overlay.style.backgroundColor = 'rgba(49, 134, 255, 0.1)';
                 document.body.appendChild(overlay);
@@ -1250,7 +1401,7 @@ class ServerManager: @unchecked Sendable {
                 };
 
                 const cleanup = () => {
-                    document.removeEventListener('mousemove', moveHandler);
+                    document.removeEventListener('mousemove', moveHandler, true);
                     document.removeEventListener('wheel', wheelHandler, { capture: true });
                     document.removeEventListener('dblclick', dblClickHandler, true);
                     document.removeEventListener('keydown', keydownHandler, true);
@@ -1266,7 +1417,7 @@ class ServerManager: @unchecked Sendable {
                     resolve(html);
                 };
 
-                document.addEventListener('mousemove', moveHandler);
+                document.addEventListener('mousemove', moveHandler, true);
                 document.addEventListener('wheel', wheelHandler, { capture: true, passive: false });
                 document.addEventListener('dblclick', dblClickHandler, true);
                 document.addEventListener('keydown', keydownHandler, true);
@@ -1356,16 +1507,37 @@ class ServerManager: @unchecked Sendable {
     // MARK: - Cyber Evaluate API
     
 
+    // =========================================================================================
+    // [BUG FIX: Deadlock Prevention in evaluateCyberScript on Main Thread]
+    // 1. Problem:
+    //    `evaluateCyberScript` unconditionally invoked `DispatchQueue.main.sync` to read
+    //    `TaiChiSettings.shared.activeInjectedApps`. If called from the main UI thread (e.g., from
+    //    MediaObserver handlers or UI action callbacks), this resulted in an immediate synchronous self-deadlock.
+    // 2. Resolution:
+    //    Checked `Thread.isMainThread`. If running on the main thread, the property is accessed directly.
+    //    Only if running on a background thread does it dispatch synchronously via `DispatchQueue.main.sync`.
+    // 3. Caveats:
+    //    When invoking `evaluateCyberScript` from any thread, ensure the script evaluation does not
+    //    perform unbounded blocking waits on other MainActor tasks.
+    // =========================================================================================
     func evaluateCyberScript(appId: String, script: String) -> (success: Bool, result: Any?, error: String?) {
-        let activeInjectedAppIDs = DispatchQueue.main.sync {
-            TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+        let activeInjectedAppIDs: [String]
+        if Thread.isMainThread {
+            activeInjectedAppIDs = MainActor.assumeIsolated {
+                TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+            }
+        } else {
+            activeInjectedAppIDs = DispatchQueue.main.sync {
+                MainActor.assumeIsolated {
+                    TaiChiSettings.shared.activeInjectedApps.map { $0.id }
+                }
+            }
         }
         guard activeInjectedAppIDs.contains(appId) else { return (false, nil, "App is not injected") }
         
         let runningApps = NSWorkspace.shared.runningApplications
         guard let app = runningApps.first(where: { $0.bundleIdentifier == appId }),
-              let portStr = getDebuggingPort(for: app.processIdentifier),
-              let port = Int(portStr) else {
+              let port = resolveDebuggingPort(for: appId, runningApp: app) else {
             return (false, nil, "Cannot find debugging port")
         }
         
@@ -1373,12 +1545,13 @@ class ServerManager: @unchecked Sendable {
         let semaphore = DispatchSemaphore(value: 0)
         var wsUrlStr: String? = nil
         
-        URLSession.shared.dataTask(with: url) { data, response, error in
+        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
             defer { semaphore.signal() }
-            guard let data = data,
+            guard let self = self,
+                  let data = data,
                   let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-                  let firstTarget = jsonArray.first(where: { ($0["type"] as? String) == "page" }),
-                  let wsUrl = firstTarget["webSocketDebuggerUrl"] as? String else { return }
+                  let bestTarget = self.findBestPageTarget(in: jsonArray, appId: appId),
+                  let wsUrl = bestTarget["webSocketDebuggerUrl"] as? String else { return }
             wsUrlStr = wsUrl
         }.resume()
         

@@ -6,6 +6,7 @@
 .tmp/
 tmp_dir/
 tmp_module_cache/
+scratch/
 TaiChi.app/
 dev_test/
 releases/

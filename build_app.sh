@@ -2,6 +2,13 @@
 
 APP_NAME="TaiChi"
 APP_BUNDLE="$APP_NAME.app"
+APP_VERSION="${VERSION:-0.3}"
+
+for arg in "$@"; do
+    if [[ "$arg" =~ ^v?[0-9]+\.[0-9]+ ]]; then
+        APP_VERSION="${arg#v}"
+    fi
+done
 
 echo "Building Swift package..."
 swift build
@@ -80,9 +87,9 @@ cat <<PLIST_EOF > "$APP_BUNDLE/Contents/Info.plist"
     <key>CFBundleName</key>
     <string>$APP_NAME</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>$APP_VERSION</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>$APP_VERSION</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSUIElement</key>
@@ -97,5 +104,32 @@ PLIST_EOF
 
 echo "Signing app bundle..."
 codesign --force --deep --sign - "$APP_BUNDLE"
+
+# Optional DMG & ZIP packaging
+DO_PACKAGE=false
+for arg in "$@"; do
+    if [ "$arg" == "--dmg" ] || [ "$arg" == "--all" ] || [ "$arg" == "-d" ]; then
+        DO_PACKAGE=true
+    fi
+done
+
+if [ "$DO_PACKAGE" = true ] || [ "$BUILD_DMG" == "true" ]; then
+    echo "Creating releases directory..."
+    mkdir -p releases
+    DMG_PATH="releases/$APP_NAME.dmg"
+    ZIP_PATH="releases/$APP_NAME.zip"
+
+    echo "Packaging DMG at $DMG_PATH..."
+    rm -f "$DMG_PATH"
+    hdiutil create -volname "$APP_NAME" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_PATH"
+
+    echo "Packaging ZIP at $ZIP_PATH..."
+    rm -f "$ZIP_PATH"
+    ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+
+    echo "Packaging complete:"
+    echo "  DMG: $DMG_PATH"
+    echo "  ZIP: $ZIP_PATH"
+fi
 
 echo "Done! You can now run the app using: open $APP_BUNDLE"
